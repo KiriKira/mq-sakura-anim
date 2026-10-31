@@ -183,10 +183,10 @@ if (wv) {
   camera.lookAt(controls.target); controls.update();
 }
 // ---- camera director ----------------------------------------------------------------------------------------------
-// When the three stop to watch the whale, the camera glides (2 s) to a spot 45 degrees counter-clockwise of them
-// round the trunk (seen from above), looking down at them from 45 degrees above, and drifts a little while they watch
-// (the whale arrives 25 degrees clockwise of them, so they see it across open sky). When they run off it glides
-// back. If the canopy would hide any of them, the camera rises until it doesn't. Dragging the view cancels the shot
+// When the three stop to watch the whale, the camera glides (2.5 s) round to the side 45 degrees counter-clockwise
+// of them about the trunk (seen from above), looking down, far enough back to frame them and the whale together, and
+// follows the whale gently while they watch (it arrives 25 degrees clockwise of them, so they see it across open
+// sky). When they run off it glides back. If the canopy would hide any of them, the camera rises until it doesn't. Dragging the view cancels the shot
 // until the next one. Off with ?view= or ?test=.
 const director = { on: !qs.get('view') && !qs.get('test'), phase: 'idle', t: 0, cancelled: false, first: true };
 const animRoot = () => stage.getObjectByName('SakuraQR-animation');
@@ -195,7 +195,7 @@ const runnerObjs = () => {
   stage.traverse(o => { if (o.isSkinnedMesh && !(whaleObj && whaleObj.getObjectById(o.id))) list.push(o.parent); });
   return list;
 };
-const SHOT = { reach: 0.036, around: -Math.PI / 4, elevation: Math.PI / 4, drift: -0.1, glide: 2 };
+const SHOT = { around: -Math.PI / 4, elevation: 0.45, drift: -0.1, glide: 2.5, follow: 1.5 };
 const trunkAt = new THREE.Vector3(info.trunk.centre[0], 0, info.trunk.centre[1]);   // the tree sits at the stage origin
 const easeInOut = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
 controls.addEventListener('start', () => { if (director.phase !== 'idle') { director.phase = 'idle'; director.cancelled = true; } });
@@ -212,16 +212,22 @@ function runnersCentre(objs) {
   for (const o of objs) c.add(o.getWorldPosition(new THREE.Vector3()));
   return c.divideScalar(objs.length || 1);
 }
-// camera for the shot: round the trunk by `around` from the runners, `reach` away from them horizontally, raised so
-// it looks down at them at `elevation`
+// camera for the shot: on the side `around` round the trunk from the runners, looking down at `elevation`, and far
+// enough back that the runners and the whale (when it is up) are both in frame
 function shotPose(around, elevation) {
   const objs = runnerObjs(), c = runnersCentre(objs);
-  const r = Math.hypot(c.x - trunkAt.x, c.z - trunkAt.z), a = Math.atan2(c.z - trunkAt.z, c.x - trunkAt.x) + around;
-  // the point at angle a from the trunk that is `reach` from the runners: |R u - r v| = reach, angle(u, v) = around
-  const R = r * Math.cos(around) + Math.sqrt(Math.max(0, SHOT.reach * SHOT.reach - Math.pow(r * Math.sin(around), 2)));
-  const pos = new THREE.Vector3(trunkAt.x + R * Math.cos(a), 0, trunkAt.z + R * Math.sin(a));
-  pos.y = c.y + Math.hypot(pos.x - c.x, pos.z - c.z) * Math.tan(elevation);
-  return { target: c.clone().add(new THREE.Vector3(0, 0.003, 0)), pos };
+  const a = Math.atan2(c.z - trunkAt.z, c.x - trunkAt.x) + around;
+  const dir = new THREE.Vector3(Math.cos(a) * Math.cos(elevation), Math.sin(elevation), Math.sin(a) * Math.cos(elevation));
+  const whaleObj = stage.getObjectByName('whale');
+  let target = c.clone().add(new THREE.Vector3(0, 0.003, 0)), radius = 0.012;
+  if (whaleObj && whaleObj.visible) {
+    const w = whaleObj.getWorldPosition(new THREE.Vector3());
+    target = c.clone().lerp(w, 0.5);
+    radius = c.distanceTo(w) / 2 + 13 * info.cell;            // plus half the whale's length
+  }
+  const half = Math.min(camera.fov / 2, THREE.MathUtils.radToDeg(Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect))) * Math.PI / 180;
+  const dist = radius / Math.sin(half) * 0.88;     // the framing sphere is generous: a little tighter
+  return { target, pos: target.clone().addScaledVector(dir, dist) };
 }
 function direct(dt) {
   if (!director.on) return;
@@ -239,7 +245,7 @@ function direct(dt) {
         return objs.every(o => clearSight(o.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.003, 0)), p.pos)); });
       if (ok) break;
     }
-    d.phase = d.first ? 'hold' : 'in'; d.t = 0;          // already mid-shot when the page opens: cut straight to it
+    d.phase = d.first ? 'hold' : 'in'; d.first0 = d.first; d.t = 0;   // already mid-shot when the page opens: cut straight to it
   }
   d.first = false;
   if (d.phase === 'idle') return;
@@ -250,7 +256,9 @@ function direct(dt) {
     camera.position.lerpVectors(d.saved.pos, shot.pos, k); controls.target.lerpVectors(d.saved.target, shot.target, k);
     if (k >= 1) d.phase = 'hold';
   } else if (d.phase === 'hold') {
-    camera.position.copy(shot.pos); controls.target.copy(shot.target);
+    const k = Math.min(1, dt * SHOT.follow);        // follow the circling whale gently
+    camera.position.lerp(shot.pos, k); controls.target.lerp(shot.target, k);
+    if (d.t < 0.05 && d.first0) { camera.position.copy(shot.pos); controls.target.copy(shot.target); }
     if (!watching) { d.phase = 'out'; d.t = 0; d.from = { pos: camera.position.clone(), target: controls.target.clone() }; }
   } else if (d.phase === 'out') {
     const k = easeInOut(Math.min(1, d.t / SHOT.glide));
