@@ -41,6 +41,7 @@ try {
   if (!report.walkersShown) fail('the walkers are not all shown (no path?)');
   if (report.insideTree.length) fail('something inside the tree');
   if (report.petalsAboveCanopy) fail('petals floating above the canopy');
+  if (report.petalsFloating) fail('resting petals with nothing under them');
   if (report.stageAfterDispose.join() !== 'SakuraQR') fail('dispose() left ' + report.stageAfterDispose.join());
   if (report.outOfBounds.length) fail('something out of bounds');
   if (report.offPlate.length) fail('a walker stepped off the plate');

@@ -36,6 +36,7 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
   const root = new THREE.Group();
   root.name = 'SakuraQR-animation';
   root.userData.mode = mode;
+  const stats = root.userData.stats = { landed: 0, slippedOff: 0, fadedInAir: 0 };   // counters, for tests
   new THREE.Matrix4().copy(stage.matrixWorld).invert().multiply(tree.matrixWorld)
     .decompose(root.position, root.quaternion, root.scale);
   root.scale.multiplyScalar(cell);
@@ -115,11 +116,10 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
         p.scale = 0;
         if (p.timer > 0) respawn(p);
         return;
-      case GROW:
+      case GROW:                                          // grows in while it already starts to fall
         p.scale = Math.min(1, p.timer / 0.6);
-        p.angle += p.spin * dt * 0.3;
         if (p.timer >= 0.6) { p.state = FALL; p.timer = 0; }
-        return;
+        break;
       case REST:
         if (active) kick(p);
         if (p.state === REST && p.timer > p.restFor) { p.state = FADE; p.timer = 0; }
@@ -153,8 +153,17 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
     if (p.vy < 0) {
       const g = field.footGround(p.x, p.z, p.y - r + 1e-4, rh);
       if (ny - r <= g) {
-        p.y = g + PETAL_THICK / 2 + 0.01;
-        p.state = REST; p.timer = 0; p.restFor = 2 + rand() * 3.5; p.ground = g;
+        // only settle with something right under the petal's middle; caught on an edge, it slips off it
+        if (field.supported(p.x, p.z, p.y - r + 1e-4, g)) {
+          p.y = g + PETAL_THICK / 2 + 0.01;
+          p.state = REST; p.timer = 0; p.restFor = 2 + rand() * 3.5; p.ground = g; p.airFade = false; stats.landed++;
+        } else {
+          const [dx, dz] = field.supportDir(p.x, p.z, p.y - r + 1e-4, rh, g);
+          p.ix = -dx * 3; p.iz = -dz * 3; p.vy = Math.min(p.vy, -0.2);
+          if (!p.stuck) stats.slippedOff++;
+          p.stuck = (p.stuck || 0) + dt;
+          if (p.stuck > 0.4) { p.state = FADE; p.timer = 0; p.stuck = 0; p.airFade = true; stats.fadedInAir++; if (stats.where) stats.where.push([p.x, p.y, p.z, g, dx, dz].map(n => +n.toFixed(2))); }   // wedged where it can't slip off: let it go
+        }
         return;
       }
     } else {
@@ -162,6 +171,7 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
       if (ny + r >= c) { p.vy = 0; return; }
     }
     p.y = ny;
+    p.stuck = 0;
     p.angle += p.spin * dt;
   }
 
@@ -187,7 +197,7 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
     for (let i = 0; i < PETALS; i++) {
       const p = P[i];
       qYaw.setFromAxisAngle(up, p.yaw);
-      if (p.state === FALL || p.state === GROW) q.setFromAxisAngle(p.axis, p.angle).multiply(qYaw); else q.copy(qYaw);
+      if (p.state === FALL || p.state === GROW || (p.state === FADE && p.airFade)) q.setFromAxisAngle(p.axis, p.angle).multiply(qYaw); else q.copy(qYaw);
       const s = p.scale * p.size;
       pos.set(p.x, p.y, p.z); scl.set(s, s, s);
       petalMesh.setMatrixAt(i, mat.compose(pos, q, scl));
@@ -371,6 +381,19 @@ function buildField(THREE, tree, info) {
       for (const [u, v] of OFF) g = Math.max(g, ground(x + u * r, z + v * r, y));
       return g;
     },
+    // is there ground at height g under the middle and 0.2 to each side (so, allowing for the grid's coarseness,
+    // really under the petal's middle)?
+    supported(x, z, y, g) {
+      for (const [u, v] of [[0, 0], [0.2, 0], [-0.2, 0], [0, 0.2], [0, -0.2]]) if (ground(x + u, z + v, y) < g - 0.05) return false;
+      return true;
+    },
+    // unit direction from (x, z) towards the footprint points whose ground is at height g
+    supportDir(x, z, y, r, g) {
+      let dx = 0, dz = 0;
+      for (const [u, v] of OFF) if (ground(x + u * r, z + v * r, y) >= g - 0.05) { dx += u; dz += v; }
+      const n = Math.hypot(dx, dz) || 1;
+      return [dx / n, dz / n];
+    },
     footCeil(x, z, y, r) {
       let c = Infinity;
       for (const [u, v] of OFF) c = Math.min(c, ceil(x + u * r, z + v * r, y));
@@ -391,7 +414,8 @@ function spawnPoints(field, info, plateTop) {
       const b = runs[k], below = runs[k - 1];
       if (b - below < 2 * r + 0.5 || b < plateTop + 3) continue;
       const y = b - r - 0.05;
-      if (!field.footBlocked(x, z, y - r, y + r, rh)) under.push(x, y, z);
+      // only where the fall is clear all the way to the plate (not into the branches round the trunk)
+      if (!field.footBlocked(x, z, y - r, y + r, rh) && field.footGround(x, z, y - r, rh) <= plateTop + 0.01) under.push(x, y, z);
     }
     for (const [di, dj] of NB) {                             // beside a canopy wall, at least a cube below its top
       const ni = i + di, nj = j + dj;
@@ -401,7 +425,8 @@ function spawnPoints(field, info, plateTop) {
         const b = wall[k], t = wall[k + 1];
         if (t < plateTop + 4) continue;                      // trunk base and roots: not canopy
         for (let y = Math.max(b, plateTop + 3) + r; y <= t - 1 - r; y += 1) {
-          if (!field.footBlocked(x, z, y - r, y + r, rh)) side.push(x, y, z);
+          // clear air beside the wall with a long drop below, so the petal is seen falling, not popping up on a ledge
+          if (!field.footBlocked(x, z, y - r, y + r, rh) && field.footGround(x, z, y - r, rh) < y - r - 3) side.push(x, y, z);
         }
       }
     }

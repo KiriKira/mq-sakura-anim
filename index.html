@@ -155,7 +155,8 @@ renderer.setAnimationLoop(now => {
 //  * is everything within the plate plus 3 cubes and above y = 0, do the walkers stay on the plate?
 //  * do two walkers ever come closer than their radii allow?
 async function check() {
-  const out = { samples: 0, points: 0, insideTree: [], outOfBounds: [], offPlate: [], walkerOverlap: 0, petalsAboveCanopy: 0, aboveCanopy: [], petalsLanded: { plate: 0, canopy: 0 } };
+  stage.getObjectByName('SakuraQR-animation').userData.stats.where = [];
+  const out = { samples: 0, points: 0, insideTree: [], outOfBounds: [], offPlate: [], walkerOverlap: 0, petalsAboveCanopy: 0, aboveCanopy: [], petalsFloating: 0, floating: [], petalsLanded: { plate: 0, canopy: 0 } };
   const solid = [];
   tree.updateMatrixWorld(true);
   tree.traverse(o => {
@@ -173,6 +174,7 @@ async function check() {
   const corners = [];
   for (const x of [-0.25, 0.25]) for (const y of [-0.03, 0.03]) for (const z of [-0.25, 0.25]) corners.push(new THREE.Vector3(x, y, z));
   const m4 = new THREE.Matrix4(), v = new THREE.Vector3(), seen = new Set();
+  const prevPos = [];
   const note = (list, what) => { if (list.length < 20) list.push(what); };
   const walkers = [];
   root.traverse(o => { if (o.isSkinnedMesh) walkers.push(o); });
@@ -180,6 +182,9 @@ async function check() {
 
   for (let step = 0; step <= 90 * 30; step++) {
     if (step) { timedUpdate(1 / 30, elapsed); elapsed += 1 / 30; }
+    if (step % 90 === 89) {                   // remember where every petal is, one frame before each sample
+      for (let i = 0; i < petals.count; i++) { petals.getMatrixAt(i, m4); m4.premultiply(petals.matrixWorld); prevPos[i] = [m4.elements[12], m4.elements[13], m4.elements[14]]; }
+    }
     if (step % 90) continue;
     out.samples++;
     stage.updateMatrixWorld(true);
@@ -213,19 +218,26 @@ async function check() {
         if (inside(v)) note(out.insideTree, ['petal ' + i, step / 30, v.toArray().map(n => +(n / cell).toFixed(2))]);
       }
       const e = m4.elements;
-      if (Math.abs(e[5]) < 0.99 * Math.hypot(e[4], e[5], e[6])) {        // tumbling → in the air: not above the canopy top near it
+      const pp = prevPos[i], still = pp && pp[0] === e[12] && pp[1] === e[13] && pp[2] === e[14];
+      if (!still) {                                                        // moving → in the air: not above the canopy top near it
         const g = info.grid, col = Math.floor((e[12] - g.origin[0]) / cell), row = Math.floor((e[14] - g.origin[1]) / cell);
         let top = 0;
         for (let r = row - 2; r <= row + 2; r++) for (let c = col - 2; c <= col + 2; c++) if (g.surface[r] && g.surface[r][c] > top) top = g.surface[r][c];
         if (top > 1 && e[13] / cell > top) { out.petalsAboveCanopy++; note(out.aboveCanopy, ['petal ' + i, step / 30, [e[12] / cell, e[13] / cell, e[14] / cell].map(n => +n.toFixed(2)), top]); }
       }
-      if (Math.abs(e[5]) > 0.99 * Math.hypot(e[4], e[5], e[6])) {        // lying flat → resting
+      if (still && Math.abs(e[5]) > 0.99 * Math.hypot(e[4], e[5], e[6])) {        // lying flat and not moving → resting
         const y = e[13] / cell;
         if (y < info.plate.top / cell + 0.1) out.petalsLanded.plate++; else out.petalsLanded.canopy++;
+        // something must be right under its middle: a ray straight down from the centre hits the tree within reach
+        ray.set(new THREE.Vector3(e[12], e[13], e[14]), new THREE.Vector3(0.0011, -1, 0.0017).normalize());
+        ray.far = 0.1 * cell;
+        if (!ray.intersectObjects(solid, false).length) { out.petalsFloating++; note(out.floating, ['petal ' + i, step / 30, [e[12] / cell, e[13] / cell, e[14] / cell].map(n => +n.toFixed(2))]); }
+        ray.far = Infinity;
       }
     }
     await new Promise(r => setTimeout(r));
   }
+  out.petalStats = Object.assign({}, root.userData.stats);
   // dispose() must leave the stage as it found it; then set up again (same seed, same start)
   anim.dispose();
   out.stageAfterDispose = stage.children.map(o => o.name);
