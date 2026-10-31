@@ -89,6 +89,25 @@ try {
     await page.screenshot({ path: path.join(OUT, 'music-button.png') });
     await page.close();
   }
+  // the camera director: cut in mid-shot (screenshot), and live: glides in when they stop, back out when they run
+  {
+    const { page, problems } = await open('t=24&pause=1');
+    if (problems.length) fail('director: ' + problems.join('\n'));
+    await page.screenshot({ path: path.join(OUT, 'show-2-watch-camera.png') });
+    await page.close();
+  }
+  {
+    const { page, problems } = await open('t=18.5');
+    const seen = [];
+    for (const phase of ['in', 'hold', 'out', 'idle']) {
+      try { await page.waitForFunction(p => window.__director === p, phase, { timeout: 180000, polling: 50 }); seen.push(phase); }
+      catch { seen.push('no ' + phase); }
+    }
+    console.log('director', seen.join(' -> '));
+    if (seen.join() !== 'in,hold,out,idle') fail('the camera director did not glide in, hold and glide out');
+    if (problems.length) fail('director: ' + problems.join('\n'));
+    await page.close();
+  }
   // the show: the whale diving in, everyone watching, the whale circling while they run, climbing away, the hop
   for (const [view, t, name] of [['wide', 18.8, 'show-1-dive'], ['wide', 24, 'show-2-watch'], ['group', 24, 'show-2-watch-close'],
     ['wide', 40, 'show-3-circle'], ['wide', 59.5, 'show-4-climb'], ['group', 70, 'show-5-hop']]) {

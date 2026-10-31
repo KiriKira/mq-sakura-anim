@@ -95,7 +95,7 @@ const VIEWS = {
 function placeCamera(view) {
   if (view === 'wide') {
     controls.target.set(0, 0.03, 0);
-    camera.position.set(0.16, 0.085, 0.19);
+    camera.position.set(0.21, 0.13, 0.25);
     camera.lookAt(controls.target); controls.update();
     return;
   }
@@ -182,11 +182,91 @@ if (wv) {
   camera.position.copy(p).addScaledVector(out, d).addScaledVector(side, d * 0.35).add(new THREE.Vector3(0, d * 0.28, 0));
   camera.lookAt(controls.target); controls.update();
 }
+// ---- camera director ----------------------------------------------------------------------------------------------
+// When the three stop to watch the whale, the camera glides (2 s) to a spot 45 degrees counter-clockwise of them
+// round the trunk (seen from above), looking down at them from 45 degrees above, and drifts a little while they watch
+// (the whale arrives 25 degrees clockwise of them, so they see it across open sky). When they run off it glides
+// back. If the canopy would hide any of them, the camera rises until it doesn't. Dragging the view cancels the shot
+// until the next one. Off with ?view= or ?test=.
+const director = { on: !qs.get('view') && !qs.get('test'), phase: 'idle', t: 0, cancelled: false, first: true };
+const animRoot = () => stage.getObjectByName('SakuraQR-animation');
+const runnerObjs = () => {
+  const whaleObj = stage.getObjectByName('whale'), list = [];
+  stage.traverse(o => { if (o.isSkinnedMesh && !(whaleObj && whaleObj.getObjectById(o.id))) list.push(o.parent); });
+  return list;
+};
+const SHOT = { reach: 0.036, around: -Math.PI / 4, elevation: Math.PI / 4, drift: -0.1, glide: 2 };
+const trunkAt = new THREE.Vector3(info.trunk.centre[0], 0, info.trunk.centre[1]);   // the tree sits at the stage origin
+const easeInOut = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+controls.addEventListener('start', () => { if (director.phase !== 'idle') { director.phase = 'idle'; director.cancelled = true; } });
+const treeSolids = [];
+tree.traverse(o => { if (o.isMesh) treeSolids.push(o); });
+const sightRay = new THREE.Raycaster();
+function clearSight(from, to) {
+  const d = to.clone().sub(from), len = d.length();
+  sightRay.set(from, d.normalize()); sightRay.far = len;
+  return !sightRay.intersectObjects(treeSolids, false).length;
+}
+function runnersCentre(objs) {
+  const c = new THREE.Vector3();
+  for (const o of objs) c.add(o.getWorldPosition(new THREE.Vector3()));
+  return c.divideScalar(objs.length || 1);
+}
+// camera for the shot: round the trunk by `around` from the runners, `reach` away from them horizontally, raised so
+// it looks down at them at `elevation`
+function shotPose(around, elevation) {
+  const objs = runnerObjs(), c = runnersCentre(objs);
+  const r = Math.hypot(c.x - trunkAt.x, c.z - trunkAt.z), a = Math.atan2(c.z - trunkAt.z, c.x - trunkAt.x) + around;
+  // the point at angle a from the trunk that is `reach` from the runners: |R u - r v| = reach, angle(u, v) = around
+  const R = r * Math.cos(around) + Math.sqrt(Math.max(0, SHOT.reach * SHOT.reach - Math.pow(r * Math.sin(around), 2)));
+  const pos = new THREE.Vector3(trunkAt.x + R * Math.cos(a), 0, trunkAt.z + R * Math.sin(a));
+  pos.y = c.y + Math.hypot(pos.x - c.x, pos.z - c.z) * Math.tan(elevation);
+  return { target: c.clone().add(new THREE.Vector3(0, 0.003, 0)), pos };
+}
+function direct(dt) {
+  if (!director.on) return;
+  const runners = (animRoot() && animRoot().userData.runners) || [];
+  const watching = runners.some(r => r.mode === 'watch');
+  if (!watching) director.cancelled = false;
+  const d = director;
+  if (d.phase === 'idle' && watching && !d.cancelled) {
+    d.saved = { pos: camera.position.clone(), target: controls.target.clone() };
+    // 45 degrees up; higher if the canopy is in the way of any of them (checked over the drift too)
+    const objs = runnerObjs();
+    d.elevation = SHOT.elevation;
+    for (; d.elevation < 1.4; d.elevation += 0.08) {
+      const ok = [0, SHOT.drift].every(dr => { const p = shotPose(SHOT.around + dr, d.elevation);
+        return objs.every(o => clearSight(o.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.003, 0)), p.pos)); });
+      if (ok) break;
+    }
+    d.phase = d.first ? 'hold' : 'in'; d.t = 0;          // already mid-shot when the page opens: cut straight to it
+  }
+  d.first = false;
+  if (d.phase === 'idle') return;
+  d.t += dt;
+  const shot = shotPose(SHOT.around + SHOT.drift * Math.min(1, d.t / 9), d.elevation);
+  if (d.phase === 'in') {
+    const k = easeInOut(Math.min(1, d.t / SHOT.glide));
+    camera.position.lerpVectors(d.saved.pos, shot.pos, k); controls.target.lerpVectors(d.saved.target, shot.target, k);
+    if (k >= 1) d.phase = 'hold';
+  } else if (d.phase === 'hold') {
+    camera.position.copy(shot.pos); controls.target.copy(shot.target);
+    if (!watching) { d.phase = 'out'; d.t = 0; d.from = { pos: camera.position.clone(), target: controls.target.clone() }; }
+  } else if (d.phase === 'out') {
+    const k = easeInOut(Math.min(1, d.t / SHOT.glide));
+    camera.position.lerpVectors(d.from.pos, d.saved.pos, k); controls.target.lerpVectors(d.from.target, d.saved.target, k);
+    if (k >= 1) d.phase = 'idle';
+  }
+  camera.lookAt(controls.target);
+  window.__director = d.phase;
+}
+
 const paused = !!qs.get('pause');
 let last = performance.now(), frames = 0;
 renderer.setAnimationLoop(now => {
   const dt = Math.min((now - last) / 1000, 0.1); last = now;
   if (!paused) { elapsed += dt; timedUpdate(dt, elapsed, showTime()); }
+  direct(dt);
   controls.update();
   renderer.render(scene, camera);
   if (++frames === 3) {
@@ -209,7 +289,7 @@ renderer.setAnimationLoop(now => {
 //  * do two walkers ever come closer than their radii allow?
 async function check() {
   stage.getObjectByName('SakuraQR-animation').userData.stats.where = [];
-  const out = { samples: 0, points: 0, insideTree: [], outOfBounds: [], offPlate: [], walkerOverlap: 0, showErrors: [], timeline: [], whaleLowest: Infinity, petalsAboveCanopy: 0, aboveCanopy: [], petalsFloating: 0, floating: [], petalsLanded: { plate: 0, canopy: 0 } };
+  const out = { samples: 0, points: 0, insideTree: [], outOfBounds: [], offPlate: [], walkerOverlap: 0, showErrors: [], timeline: [], whaleLowest: Infinity, whaleReach: 0, whaleVsRunners: [], petalsAboveCanopy: 0, aboveCanopy: [], petalsFloating: 0, floating: [], petalsLanded: { plate: 0, canopy: 0 } };
   const solid = [];
   tree.updateMatrixWorld(true);
   tree.traverse(o => {
@@ -269,6 +349,17 @@ async function check() {
       if (expect === 'look' && r.v > 0.01) note(out.showErrors, ['runner ' + i + ' moving while watching', +t.toFixed(2)]);
     });
     out.timeline.push([+t.toFixed(1), whaleUp ? 'whale' : '-', runners.map(r => r.act).join(',')]);
+    if (expect === 'look' && whaleUp) {            // while watching, each of them must be able to see the whale
+      const wp = whale.getWorldPosition(new THREE.Vector3()), plan = root.userData.whalePlan;
+      for (const w of walkers) {
+        const eye = w.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 3.5 * cell, 0));
+        const d = wp.clone().sub(eye), len = d.length();
+        ray.set(eye, d.normalize()); ray.far = len;
+        if (ray.intersectObjects(solid, false).length) note(out.showErrors, [w.name + ' cannot see the whale', +t.toFixed(2)]);
+        ray.far = Infinity;
+      }
+      out.whaleVsRunners.push([+t.toFixed(1), +(((plan.whale - plan.runners) * 180 / Math.PI + 540) % 360 - 180).toFixed(1)]);
+    }
     if (whaleUp && whaleMesh) {                     // the whale: never in the tree, never past plate + 3 cubes
       whaleMesh.skeleton && whaleMesh.skeleton.update();
       seen.clear();
@@ -280,7 +371,10 @@ async function check() {
         if (seen.has(k)) continue; seen.add(k);
         out.points++;
         low = Math.min(low, v.y);
-        if (Math.abs(v.x) > lim || Math.abs(v.z) > lim || v.y < 0) note(out.outOfBounds, ['whale', +t.toFixed(2), v.toArray().map(n => +(n / cell).toFixed(2))]);
+        // the whale may go beyond plate + 3 cubes, but only as far as its own circle (plus fins) takes it
+        const orbit = root.userData.whaleOrbit, dx = v.x / cell - orbit.centre[0], dz = v.z / cell - orbit.centre[1];
+        if (Math.hypot(dx, dz) > orbit.reach + 1.5 || v.y < 0) note(out.outOfBounds, ['whale', +t.toFixed(2), v.toArray().map(n => +(n / cell).toFixed(2))]);
+        out.whaleReach = Math.max(out.whaleReach, Math.hypot(dx, dz));
         if (inside(v)) note(out.insideTree, ['whale', +t.toFixed(2), v.toArray().map(n => +(n / cell).toFixed(2))]);
       }
       out.whaleLowest = Math.min(out.whaleLowest, low / cell);

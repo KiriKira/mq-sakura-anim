@@ -47,7 +47,9 @@ const SHOW = {
 };
 const WHALE_DIVE = 48;        // how far above its circle the whale starts its dive, in cubes
 const WHALE_CLIMB = 60;       // how far it has climbed by the time it is gone
-const WHALE_LAP = 24;         // seconds per lap round the tree
+const WHALE_ORBIT = 2;        // radius of its circle, in plate half-widths
+const WHALE_LAP = 40;         // seconds per lap round the tree
+const WHALE_LEAD = 25 * Math.PI / 180;   // where it arrives: this far clockwise (from above) of where the runners stop
 
 export default async function setup({ THREE = THREE_NS, stage, tree, info, mode = '3d', showLength = 93.27 }) {
   const cell = info.cell;
@@ -104,8 +106,9 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
   }
 
   // ---- whale ------------------------------------------------------------------------------------------------------
-  // Circles the trunk high enough that, flukes, fins and banking included, it stays clear of the canopy, on a circle
-  // small enough that it never reaches more than 3 cubes past the plate's edge.
+  // Circles the trunk on a big circle — WHALE_ORBIT times the plate's half-width (the one thing in the scene allowed
+  // beyond 3 cubes past the plate's edge) — high enough that, flukes, fins and banking included, it stays clear of
+  // the canopy.
   const wg = await loader.loadAsync(new URL('./assets/whale.glb', import.meta.url).href);
   const whale = wg.scene;
   whale.name = 'whale';
@@ -120,25 +123,50 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
   const qBend = new THREE.Quaternion(), yAxis = new THREE.Vector3(0, 1, 0);
   if (wg.animations.length) whaleMixer.clipAction(wg.animations[0]).play();
   const tcx = info.trunk.centre[0] / cell, tcz = info.trunk.centre[1] / cell;
-  const reachOut = Math.min(field.x0 + field.nx / SAMPLES - tcx, tcx - field.x0, field.z0 + field.nz / SAMPLES - tcz, tcz - field.z0) + 3 - 1;
   const wLen = wex.length || 24, wSpan = wex.span || 13, wHeight = wex.height || 8;
-  let wScale = 1, wR = 9.5;
+  const wScale = 1, wR = WHALE_ORBIT * info.plate.cells / 2;
   const halfLen = wLen / 2 + 1.5;                   // the model is a little off-centre (snout +11.5, flukes -13.5)
-  // its spine is bent to follow the circle (see stepWhale), so the fins are what reach furthest out
-  const fits = () => wR + wScale * wSpan / 2 <= reachOut;
-  while (!fits() && wR > 5) wR -= 0.25;
-  while (!fits() && wScale > 0.3) wScale -= 0.02;
+  root.userData.whaleOrbit = { centre: [tcx, tcz], radius: wR, reach: wR + wScale * wSpan / 2 };   // for tests
   whale.scale.setScalar(wScale);
   const WHALE_ROLL = 0.18;
   const wAlt = info.height / cell + 2.5 + wScale * (wHeight / 2 + (wSpan / 2) * Math.sin(WHALE_ROLL)) + 1;   // + 1 for its bob
-  const wOmega = -2 * Math.PI / WHALE_LAP;          // clockwise seen from above, against the runners
+  // angles round the trunk: a = atan2(z, x), which grows clockwise seen from above; the runners go that way
+  const wOmega = -2 * Math.PI / WHALE_LAP;          // counter-clockwise seen from above, against the runners
   const smooth = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x);
+  // where the whale is at song time t: [x, y, z, scale]; null when it is not in the sky
+  // Where the runners stop decides where the whale should be when it arrives: WHALE_LEAD clockwise (seen from above)
+  // of them round the trunk, so they see it across open sky, not through the tree. Their stopping point depends on
+  // how the chase has gone, so during the dive (high up, out of sight) the whale's place on its circle is steered
+  // towards the predicted spot, and locked once they have stopped.
+  let wPhase = null, wLocked = false;
+  const groupAngle = () => {
+    let x = 0, z = 0;
+    for (const w of walkers) { x += Math.cos(Math.atan2(w.pz - tcz, w.px - tcx)); z += Math.sin(Math.atan2(w.pz - tcz, w.px - tcx)); }
+    return Math.atan2(z, x);
+  };
+  function planWhale(t, dt) {
+    if (t < SHOW.whaleIn || t >= SHOW.whaleGone) { wPhase = null; wLocked = false; return; }
+    if (wLocked || !path || walkers.some(w => w.px === undefined)) { if (wPhase === null) wPhase = Math.PI * 0.75; return; }
+    const stopAt = SHOW.watchFrom[SHOW.watchFrom.length - 1];
+    let ahead = 0;                                  // how much further round they will get before they stop
+    if (t < stopAt + 0.6) {
+      const v = walkers.reduce((a, w) => a + w.v, 0) / walkers.length;
+      ahead = (Math.max(0, stopAt - t) * v + v * v / (2 * 3.5)) / (path.length / (2 * Math.PI));
+    }
+    const target = groupAngle() + ahead + WHALE_LEAD;
+    // first sight (or a page opened after the whale arrived): put it there; otherwise ease towards it, never jump
+    if (wPhase === null) wPhase = target;
+    else wPhase += Math.atan2(Math.sin(target - wPhase), Math.cos(target - wPhase)) * Math.min(1, dt * (t < SHOW.whaleArrive ? 2 : 1.2));
+    if (t >= SHOW.whaleArrive + 0.6 && walkers.every(w => w.v < 0.05)) wLocked = true;
+    root.userData.whalePlan = { runners: groupAngle(), whale: wPhase, locked: wLocked };
+  }
   // where the whale is at song time t: [x, y, z, scale]; null when it is not in the sky
   function whaleAt(t, out) {
     if (t < SHOW.whaleIn || t >= SHOW.whaleGone) return null;
-    const a = Math.PI * 0.75 + wOmega * (t - SHOW.whaleArrive);
+    const a = (wPhase ?? Math.PI * 0.75) + wOmega * (t - SHOW.whaleArrive);
     let y = wAlt + Math.sin(2 * Math.PI * (t - SHOW.whaleArrive) / 12);
-    if (t < SHOW.whaleArrive) y += WHALE_DIVE * Math.pow(1 - (t - SHOW.whaleIn) / (SHOW.whaleArrive - SHOW.whaleIn), 2);
+    // the dive mirrors the climb: steep at first, easing out to level flight as it joins its circle
+    if (t < SHOW.whaleArrive) y += WHALE_DIVE * Math.pow(1 - (t - SHOW.whaleIn) / (SHOW.whaleArrive - SHOW.whaleIn), 2.3);
     if (t > SHOW.whaleClimb) y += WHALE_CLIMB * Math.pow((t - SHOW.whaleClimb) / (SHOW.whaleGone - SHOW.whaleClimb), 2.3);
     const fade = 1 - smooth((t - (SHOW.whaleGone - 1.4)) / 1.4);   // shrinks away into the distance at the very end
     out[0] = tcx + wR * Math.cos(a); out[1] = y; out[2] = tcz + wR * Math.sin(a); out[3] = fade;
@@ -146,18 +174,22 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
   }
   const wa = [0, 0, 0, 0], wb = [0, 0, 0, 0];
   function stepWhale(t, dt) {
+    planWhale(t, dt);
     if (!whaleAt(t, wa)) { whale.visible = false; return; }
-    const ahead = whaleAt(t + 0.05, wb), sgn = ahead ? 1 : -1;   // velocity from a point just ahead (or behind)
-    if (!ahead) whaleAt(t - 0.05, wb);
-    const vx = (wb[0] - wa[0]) * sgn, vy = (wb[1] - wa[1]) * sgn, vz = (wb[2] - wa[2]) * sgn;
+    // direction of travel averaged over a second either side, so nose-down turns to level gradually
+    const t0 = Math.max(SHOW.whaleIn, t - 0.5), t1 = Math.min(SHOW.whaleGone - 0.001, t + 0.5);
+    whaleAt(t0, wb); const x0 = wb[0], y0 = wb[1], z0 = wb[2];
+    whaleAt(t1, wb);
+    const vx = wb[0] - x0, vy = wb[1] - y0, vz = wb[2] - z0;
+    whaleAt(t, wa);
     whale.visible = wa[3] > 0.01;
-    // heading along its path, nose up or down with its climb (at most 40 degrees), banked into the turn; raised by
-    // as much as the pitch swings its tail or nose down, so it never dips towards the canopy
-    const pitch = Math.max(-0.7, Math.min(0.7, Math.atan2(vy, Math.hypot(vx, vz))));
+    // heading along its path, nose up or down with its climb (softly limited to ~45 degrees), banked into the turn;
+    // raised by as much as the pitch swings its tail or nose down, so it never dips towards the canopy
+    const pitch = 0.8 * Math.tanh(Math.atan2(vy, Math.hypot(vx, vz)) / 0.8);
     whale.position.set(wa[0], wa[1] + wScale * halfLen * Math.sin(Math.abs(pitch)), wa[2]);
     whale.rotation.set(-pitch, Math.atan2(vx, vz), WHALE_ROLL * Math.sign(wOmega), 'YXZ');
     whale.scale.setScalar(wScale * Math.max(wa[3], 0.001));
-    whaleMixer.timeScale = 1 + Math.min(0.8, Math.abs(vy) / 0.05 / 12);
+    whaleMixer.timeScale = 1 + Math.min(0.8, Math.abs(vy) / (t1 - t0) / 12);
     whaleMixer.update(dt);
     // bend into the turn: head and tail both curve towards the centre of the circle (on top of the swim clip)
     const turn = Math.sign(wOmega) * -1;              // +1: the centre is on the whale's +x side
