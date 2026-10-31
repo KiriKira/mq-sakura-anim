@@ -5,7 +5,7 @@
 // frame the figure is lifted just enough that nothing ever dips below the ground. One mesh, one material (vertex colours) per figure; faces of the same
 // colour are merged into larger rectangles (greedy meshing) to keep the triangle count low.
 //
-// The look follows the three reference sprites: a blue hooded healer with a white-framed crest and hood tails,
+// The look follows the three reference sprites: a blue hooded healer with a white-framed crest and swinging pigtails,
 // a red mage with a tiered, bent-tipped hat and salmon hair, a gold warrior with a horned helmet and brown hair.
 //
 // Units: 1 = one tree cube (scene.js scales by info.cell). +Y up, feet on y = 0, facing +Z.
@@ -24,13 +24,18 @@ const ARM_FORWARD = 10 * Math.PI / 180;   // arms carried a little in front
 const LEAN = 11 * Math.PI / 180;          // forward lean of the body
 const TWIST = 8 * Math.PI / 180;          // body turning with the arms
 const BOUNCE = 2.2;           // hip rise in the flight phase, in voxels
+const BRAID_LIFT = -32 * Math.PI / 180;   // pigtails' mean angle (down from straight out)
+const BRAID_FLICK = 24 * Math.PI / 180;   // how far they flick up and down with the bounce
+const BRAID_LAG = 1.3;                     // radians behind the bounce
+const BRAID_SWAY = 10 * Math.PI / 180;
+const BRAID_TRAIL = 30 * Math.PI / 180;   // swept back by the run
 const STRIDE_GAIN = 1.0;      // stride per cycle, relative to how far the legs reach
 const KEYS = 24;
 
-// joints: 0 hips (body, head, hat, cape), 1 arm +x, 2 arm -x, 3 leg +x, 4 leg -x
-const HIPS = 0, ARM_P = 1, ARM_N = 2, LEG_P = 3, LEG_N = 4;
-const PIVOTS = [[0, 5, 0], [8.5, 11, 0], [-8.5, 11, 0], [2.5, 5, 0], [-2.5, 5, 0]];   // voxel units, absolute
-const JOINT_NAMES = ['hips', 'arm_l', 'arm_r', 'leg_l', 'leg_r'];
+// joints: 0 hips (body, head, hat, cape), 1 arm +x, 2 arm -x, 3 leg +x, 4 leg -x, 5 braid +x, 6 braid -x
+const HIPS = 0, ARM_P = 1, ARM_N = 2, LEG_P = 3, LEG_N = 4, BRAID_P = 5, BRAID_N = 6;   // braids: only the blue figure has any
+const PIVOTS = [[0, 5, 0], [8.5, 11, 0], [-8.5, 11, 0], [2.5, 5, 0], [-2.5, 5, 0], [8, 16, 0], [-8, 16, 0]];   // voxel units, absolute
+const JOINT_NAMES = ['hips', 'arm_l', 'arm_r', 'leg_l', 'leg_r', 'braid_l', 'braid_r'];
 
 function figure() {
   const parts = PIVOTS.map(() => new Map());
@@ -106,7 +111,7 @@ const SKIN = { skin: '#EBB693', mouth: '#D49274', hand: '#EBB693' };
 // Blue: hooded healer.
 function blue() {
   const c = Object.assign({}, SKIN, {
-    hood: '#1C4CC2', light: '#2E9BE6', dark: '#10308A', white: '#E8E8E2', eye: '#2B8FE6',
+    hood: '#1C4CC2', light: '#2E9BE6', dark: '#10308A', braid: '#1A3FA6', white: '#E8E8E2', eye: '#2B8FE6',
     leg: '#E8E8E2', shoe: '#E8E8E2', torso: '#1C4CC2', skirt: '#1C4CC2', sleeve: '#1C4CC2', cuff: '#2E9BE6'
   });
   const f = figure(); body(f, c);
@@ -122,9 +127,15 @@ function blue() {
   f.box(HIPS, -1, 1, 25, 26, -2, 6, c.white);               // ridge over the top
   f.box(HIPS, -6, 6, 20, 21, -8, -7, c.white);              // and a white T on the back
   f.box(HIPS, -1, 1, 21, 25, -8, -7, c.white);
-  f.pair(HIPS, 8, 11, 15, 17, -1, 1, c.hood);               // hood tails: out ...
-  f.pair(HIPS, 11, 13, 15, 19, -1, 1, c.hood);              // ... and up
-  f.pair(HIPS, 11, 13, 18, 19, -1, 1, c.dark);
+  // pigtails from under the hood, on their own joints so they swing (modelled sticking straight out)
+  for (const [j, s] of [[BRAID_P, 1], [BRAID_N, -1]]) {
+    const bx = (a, b, y0, y1, col) => f.box(j, s > 0 ? a : -b, s > 0 ? b : -a, y0, y1, -1, 1, col);
+    bx(8, 9, 14, 17, c.light);                              // hair tie
+    bx(9, 13, 15, 17, c.dark);                              // plait ...
+    bx(10, 11, 15, 17, c.braid); bx(12, 13, 15, 17, c.braid);
+    bx(13, 15, 14, 18, c.dark);                             // ... ending in a tuft that curls up
+    bx(14, 15, 18, 19, c.dark);
+  }
   f.box(HIPS, -6, 6, 10, 12, 3, 5, c.light);                // collar, zigzag edged
   for (let x = -6; x < 6; x++) if (((x + 6) % 4) < 2) f.px(HIPS, x, 10, 4, c.hood);
   f.front(HIPS, -1, 1, 3, 10, c.light);                     // robe opening
@@ -280,6 +291,11 @@ function animation(m) {
     const ph = 2 * Math.PI * i / KEYS, s = Math.sin(ph);
     const legA = LEG_SWING * s, armA = ARM_SWING * s;
     const limb = [-armA - ARM_FORWARD, armA - ARM_FORWARD, legA, -legA].map(a => qAxis(X, a));
+    // pigtails: hang down, flick up a beat after each bounce, trail behind, and sway with the body's twist
+    for (const side of [1, -1]) {
+      const lift = BRAID_LIFT + BRAID_FLICK * Math.cos(2 * ph - BRAID_LAG) + side * BRAID_SWAY * s;
+      limb.push(qMul(qAxis(Y, side * (BRAID_TRAIL + 0.1 * Math.sin(2 * ph))), qAxis([0, 0, 1], side * lift)));
+    }
     const hipQ = qMul(qAxis(Y, -TWIST * s), qAxis(X, LEAN));
     const bounce = BOUNCE * (1 - Math.cos(2 * ph)) / 2;
     // lowest vertex with the hips at their pivot height
@@ -301,7 +317,7 @@ function animation(m) {
     keys.push({ limb, hipQ, bounce, low, posed });
   }
   // lift each key so its lowest point is on the ground, then add the bounce on top
-  const times = [], hips = [], hipRot = [], rot = [[], [], [], []];
+  const times = [], hips = [], hipRot = [], rot = PIVOTS.slice(1).map(() => []);
   let height = 0, radius = 0;
   keys.forEach((k, i) => {
     const lift = -k.low + k.bounce + 0.04;
@@ -366,7 +382,7 @@ function glb({ name, f }) {
   const nodes = [
     { name, children: [1, 2], extras: { unit: '1 = one tree cube (info.cell)', height: +maxY.toFixed(4), radius: +maxR.toFixed(4), stride: +anim.stride.toFixed(4), cycle: CYCLE } },
     { name: name + '-mesh', mesh: 0, skin: 0 },
-    { name: 'hips', translation: world[HIPS], children: [3, 4, 5, 6] }
+    { name: 'hips', translation: world[HIPS], children: PIVOTS.slice(1).map((_, j) => 3 + j) }
   ];
   for (let j = 1; j < PIVOTS.length; j++) {
     nodes.push({ name: JOINT_NAMES[j], translation: world[j].map((v, a) => v - world[HIPS][a]) });
@@ -376,7 +392,7 @@ function glb({ name, f }) {
     scene: 0, scenes: [{ name, nodes: [0] }], nodes,
     meshes: [{ name, primitives: [{ attributes: { POSITION: aPos, NORMAL: aNor, COLOR_0: aCol, JOINTS_0: aJnt, WEIGHTS_0: aWgt }, indices: aIdx, material: 0 }] }],
     materials: [{ name, pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1], metallicFactor: 0, roughnessFactor: 0.9 } }],
-    skins: [{ joints: [2, 3, 4, 5, 6], inverseBindMatrices: aIbm, skeleton: 2 }],
+    skins: [{ joints: PIVOTS.map((_, j) => 2 + j), inverseBindMatrices: aIbm, skeleton: 2 }],
     animations: [{
       name: 'run',
       samplers: [aHips, aHipRot, ...aRot].map(o => ({ input: aTime, output: o, interpolation: 'LINEAR' })),
