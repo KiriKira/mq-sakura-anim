@@ -8,7 +8,7 @@
 // stage: THREE.Group everything is added to. tree: the SakuraQR GLB root, already in stage, never touched.
 // info: tree.userData.sakuraqr. mode: '3d' or 'ar' (the scene is the same in both).
 // update(dt, elapsed, showTime) once per frame (seconds). showTime is where the song is (e.g. audio.currentTime);
-// leave it out and the show runs on its own clock, looping every showLength seconds (default 90).
+// leave it out and the show runs on its own clock, looping every showLength seconds (default 93.27, the song's length).
 // dispose() removes and frees everything this module created.
 //
 // The show (song time, seconds):
@@ -49,7 +49,7 @@ const WHALE_DIVE = 48;        // how far above its circle the whale starts its d
 const WHALE_CLIMB = 60;       // how far it has climbed by the time it is gone
 const WHALE_LAP = 24;         // seconds per lap round the tree
 
-export default async function setup({ THREE = THREE_NS, stage, tree, info, mode = '3d', showLength = 90 }) {
+export default async function setup({ THREE = THREE_NS, stage, tree, info, mode = '3d', showLength = 93.27 }) {
   const cell = info.cell;
   const rand = mulberry32(SEED);
 

@@ -19,7 +19,7 @@ const { update, dispose } = await setup({ THREE, stage, tree, info, mode, showLe
 - `info` 就是 `tree.userData.sakuraqr`。
 - `mode` 传 `'3d'` 或 `'ar'`，两种模式下场景完全一样。
 - 渲染器、相机、相机控制、灯光、背景、地面都由宿主页面负责。scene.js 不碰 DOM，除了 `./assets/`（相对 scene.js 本身）不访问网络。
-- `showTime` 是歌曲当前播放到的位置（比如 `audio.currentTime`），演出跟着它走，所以暂停、拖动进度、循环都能对上。不传时，演出用自己的时钟，每 `showLength` 秒（默认 90）循环一次。
+- `showTime` 是歌曲当前播放到的位置（比如 `audio.currentTime`），演出跟着它走，所以暂停、拖动进度、循环都能对上。不传时，演出用自己的时钟，每 `showLength` 秒（默认 93.27，正好是这首歌的长度）循环一次。
 - three.js 用 0.170.0，宿主页面的 import map 要提供 `three` 和 `three/addons/`。
 
 ## 场景
@@ -51,7 +51,7 @@ const { update, dispose } = await setup({ THREE, stage, tree, info, mode, showLe
 
 ```sh
 npm install                 # three@0.170.0，演示页的 import map 指向 node_modules
-python3 -m http.server      # 打开 http://localhost:8000/
+node test/serve.mjs         # 打开 http://127.0.0.1:8000/（带 Range 支持，音乐才能拖动进度和循环；python3 -m http.server 不行）
 node test/shots.mjs         # 无头 Chromium 跑自检，截图到 screenshots/
 ```
 
@@ -79,7 +79,7 @@ node test/shots.mjs         # 无头 Chromium 跑自检，截图到 screenshots/
 
 ## 背景音乐
 
-演示页循环播放 `audio/bgm.mp3`，右上角的按钮显示正在播放「muque - いいんじゃない」，点击暂停或继续。浏览器不允许没有交互就自动出声，所以自动播放被拒绝时，按钮停在暂停状态，等观众点一下。在歌曲开始之前，演出按 scene.js 自己的时钟走；开始之后跟着歌曲的播放位置走；暂停时故事停在当前位置。音乐文件加载失败时，按钮会隐藏。
+演示页循环播放 `audio/bgm.m4a`（AAC，93.3 秒，1.5 MB），右上角的按钮显示正在播放「muque - いいんじゃない」，点击暂停或继续。浏览器不允许没有交互就自动出声，所以自动播放被拒绝时，按钮停在暂停状态，等观众点一下。在歌曲开始之前，演出按 scene.js 自己的时钟走；开始之后跟着歌曲的播放位置走；暂停时故事停在当前位置。音乐文件加载失败时，按钮会隐藏。
 
 ## 部署
 

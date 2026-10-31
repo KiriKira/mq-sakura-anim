@@ -43,7 +43,7 @@
 </button>
 <script type="module">
 // Demo host for scene.js (also what test/shots.mjs drives). Query parameters:
-//   view = ne | nw | se | sw | top   camera preset (default: free orbit from ne); w0 | w1 | w2 | group close-up of the walkers;
+//   view = ne | nw | se | sw | top   camera preset (default wide, then free orbit); w0 | w1 | w2 | group close-up of the walkers;
 //          wide: further out and higher, to see the whale
 //   t    = song time to start at: fast-forwards with fixed 1/30 s steps (default 0)
 //   nomusic = 1                       no background music; the show runs on scene.js's own clock
@@ -108,7 +108,7 @@ function placeCamera(view) {
   camera.lookAt(controls.target);
   controls.update();
 }
-placeCamera(qs.get('view') || 'ne');
+placeCamera(qs.get('view') || 'wide');
 
 addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
@@ -126,15 +126,17 @@ tree.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true
 stage.add(tree);
 const info = tree.userData.sakuraqr;
 
-let anim = await setup({ THREE, stage, tree, info, mode: qs.get('mode') || '3d' });
+const SONG_LENGTH = 93.27;   // seconds; the show loops with the song
+let anim = await setup({ THREE, stage, tree, info, mode: qs.get('mode') || '3d', showLength: SONG_LENGTH });
 
 // ---- background music -------------------------------------------------------------------------------------------
-// Loops audio/bgm.mp3 and drives the show from its position. Browsers only allow sound after the viewer has
+// Loops audio/bgm.m4a (muque「いいんじゃない」, 93.3 s) and drives the show from its position. Browsers only allow sound after the viewer has
 // interacted with the page, so if autoplay is refused the button waits in the paused state for a tap; until the song
 // has started once, the show runs on scene.js's own clock. Paused, the story holds where the song is.
 const music = { started: false, ok: false };
-const bgm = qs.get('nomusic') || qs.get('test') ? null : new Audio('audio/bgm.mp3');
+const bgm = qs.get('nomusic') || qs.get('test') ? null : new Audio('audio/bgm.m4a');
 const btn = document.getElementById('music');
+window.__bgm = bgm; window.__stage = stage;   // for test/shots.mjs
 if (bgm) {
   bgm.loop = true;
   bgm.preload = 'auto';
