@@ -1,0 +1,14 @@
+{
+  "name": "mq-sakura-anim",
+  "private": true,
+  "type": "module",
+  "description": "Cherry-blossom animation for the SakuraQR tree: falling petals and three chasing walkers (scene.js).",
+  "scripts": {
+    "walkers": "node tools/make-walkers.mjs",
+    "test": "node test/shots.mjs",
+    "serve": "python3 -m http.server 8000"
+  },
+  "devDependencies": {
+    "three": "0.170.0"
+  }
+}

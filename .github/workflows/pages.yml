@@ -1,0 +1,53 @@
+name: Deploy to GitHub Pages
+
+# Builds the static site and publishes it with GitHub Pages (Settings → Pages → Source: GitHub Actions).
+# index.html's import map points at ./node_modules/three/..., so the site gets exactly the three.js files it
+# needs, copied from the pinned npm package at the same paths. Nothing comes from a CDN.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: Assemble site
+        run: |
+          set -e
+          mkdir -p _site/node_modules/three/build _site/node_modules/three/examples/jsm/{loaders,controls,utils}
+          cp -r index.html walkers.html scene.js tree.glb assets _site/
+          cp node_modules/three/build/three.module.js _site/node_modules/three/build/
+          cp node_modules/three/examples/jsm/loaders/GLTFLoader.js _site/node_modules/three/examples/jsm/loaders/
+          cp node_modules/three/examples/jsm/controls/OrbitControls.js _site/node_modules/three/examples/jsm/controls/
+          cp node_modules/three/examples/jsm/utils/BufferGeometryUtils.js _site/node_modules/three/examples/jsm/utils/
+          cp node_modules/three/LICENSE _site/node_modules/three/
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sakura QR animation</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #f4ede9; overflow: hidden; font: 13px/1.4 system-ui, sans-serif; }
+  canvas { display: block; }
+  #hud { position: fixed; left: 8px; bottom: 8px; color: #6b4b4b; background: #fffc; padding: 4px 8px; border-radius: 6px; white-space: pre; }
+</style>
+<!-- three 0.170.0 from node_modules (npm install), no CDN -->
+<script type="importmap">
+{ "imports": {
+  "three": "./node_modules/three/build/three.module.js",
+  "three/addons/": "./node_modules/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud"></div>
+<script type="module">
+// Demo host for scene.js (also what test/shots.mjs drives). Query parameters:
+//   view = ne | nw | se | sw | top   camera preset (default: free orbit from ne); w0 | w1 | w2 | group close-up of the walkers
+//   t    = seconds to fast-forward with fixed 1/30 s steps before showing (default 0)
+//   pause = 1                         stop the clock after fast-forwarding (for screenshots)
+//   test = 1                          run the self-check (see check() below) and put the result in window.__report
+//   mode = 3d | ar                    passed through to setup()
+//   tree = path of the tree GLB (default tree.glb)
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import setup from './scene.js';
+
+const qs = new URLSearchParams(location.search);
+const hud = document.getElementById('hud');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#f4ede9');
+const camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.002, 2);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.014, 0);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight('#fff6f2', '#b9a8a4', 1.6));
+const sun = new THREE.DirectionalLight('#ffffff', 2.2);
+sun.position.set(0.05, 0.11, 0.07);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -0.05, right: 0.05, top: 0.05, bottom: -0.05, near: 0.01, far: 0.3 });
+sun.shadow.bias = -0.0002;
+sun.shadow.normalBias = 0.0002;
+scene.add(sun);
+
+const ground = new THREE.Mesh(new THREE.CircleGeometry(0.2, 48), new THREE.MeshStandardMaterial({ color: '#efe3dd', roughness: 1 }));
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.00005;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const VIEWS = {
+  ne: [1, 1], nw: [-1, 1], se: [1, -1], sw: [-1, -1]
+};
+function placeCamera(view) {
+  const d = 0.135;
+  if (view === 'top') { camera.position.set(0, d * 1.05, 0.00001); controls.target.set(0, 0, 0); }
+  else {
+    const [sx, sz] = VIEWS[view] || VIEWS.ne, e = 30 * Math.PI / 180;
+    camera.position.set(sx * d * Math.cos(e) * Math.SQRT1_2, 0.014 + d * Math.sin(e), sz * d * Math.cos(e) * Math.SQRT1_2);
+  }
+  camera.lookAt(controls.target);
+  controls.update();
+}
+placeCamera(qs.get('view') || 'ne');
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+const stage = new THREE.Group();
+stage.name = 'stage';
+scene.add(stage);
+
+const gltf = await new GLTFLoader().loadAsync(qs.get('tree') || 'tree.glb');
+const tree = gltf.scene.getObjectByName('SakuraQR') || gltf.scene;
+tree.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+stage.add(tree);
+const info = tree.userData.sakuraqr;
+
+let anim = await setup({ THREE, stage, tree, info, mode: qs.get('mode') || '3d' });
+
+// timing of update()
+const times = [];
+function timedUpdate(dt, elapsed) {
+  const t0 = performance.now();
+  anim.update(dt, elapsed);
+  times.push(performance.now() - t0);
+}
+
+let elapsed = 0;
+const ff = +(qs.get('t') || 0);
+const report = { errors: [] };
+if (qs.get('test')) Object.assign(report, await check());
+else for (; elapsed < ff; elapsed += 1 / 30) timedUpdate(1 / 30, elapsed);
+
+// view = w0 | w1 | w2: close-up of one walker; group: all three. Seen from outside the tree, looking in.
+const wv = /^w(\d)$|^group$/.exec(qs.get('view') || '');
+if (wv) {
+  const walkers = [];
+  stage.traverse(o => { if (o.isSkinnedMesh) walkers.push(o.parent); });
+  stage.updateMatrixWorld(true);
+  const list = wv[1] !== undefined ? [walkers[+wv[1]]] : walkers;
+  const p = new THREE.Vector3();
+  for (const w of list) p.add(w.getWorldPosition(new THREE.Vector3()));
+  p.divideScalar(list.length);
+  const out = new THREE.Vector3(p.x, 0, p.z).normalize();
+  const side = new THREE.Vector3(-out.z, 0, out.x);
+  const d = list.length > 1 ? 0.034 : 0.022;
+  controls.target.copy(p).add(new THREE.Vector3(0, 0.0035, 0));
+  camera.position.copy(p).addScaledVector(out, d).addScaledVector(side, d * 0.35).add(new THREE.Vector3(0, d * 0.28, 0));
+  camera.lookAt(controls.target); controls.update();
+}
+const paused = !!qs.get('pause');
+let last = performance.now(), frames = 0;
+renderer.setAnimationLoop(now => {
+  const dt = Math.min((now - last) / 1000, 0.1); last = now;
+  if (!paused) { elapsed += dt; timedUpdate(dt, elapsed); }
+  controls.update();
+  renderer.render(scene, camera);
+  if (++frames === 3) {
+    const r = renderer.info.render;
+    report.drawCalls = r.calls; report.triangles = r.triangles;
+    const sorted = times.slice().sort((a, b) => a - b);
+    report.updateMs = { calls: times.length, median: sorted[sorted.length >> 1], p95: sorted[Math.floor(sorted.length * 0.95)], max: sorted[sorted.length - 1] };
+    window.__report = report;
+    window.__ready = true;
+    hud.textContent = `draw calls ${r.calls} · triangles ${r.triangles} · update ${report.updateMs.median.toFixed(3)} ms (p95 ${report.updateMs.p95.toFixed(3)})`;
+  }
+});
+
+// ---- self-check ---------------------------------------------------------------------------------------------------
+// Runs the animation for 90 s with 1/30 s steps and every 3 s tests, independently of scene.js's own collision grid:
+//  * every walker vertex (after skinning) and every corner of every visible petal: is it inside the tree?
+//    (a ray straight up from the point, counted against the tree's triangles from both sides: odd = inside)
+//  * is everything within the plate plus 3 cubes and above y = 0, do the walkers stay on the plate?
+//  * do two walkers ever come closer than their radii allow?
+async function check() {
+  const out = { samples: 0, points: 0, insideTree: [], outOfBounds: [], offPlate: [], walkerOverlap: 0, petalsLanded: { plate: 0, canopy: 0 } };
+  const solid = [];
+  tree.updateMatrixWorld(true);
+  tree.traverse(o => {
+    if (!o.isMesh) return;
+    const m = new THREE.Mesh(o.geometry, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+    m.matrixAutoUpdate = false; m.matrix.copy(o.matrixWorld); m.matrixWorld.copy(o.matrixWorld);
+    solid.push(m);
+  });
+  const ray = new THREE.Raycaster();
+  const dir = new THREE.Vector3(0.0013, 1, 0.0021).normalize();
+  const inside = p => { ray.set(p, dir); return ray.intersectObjects(solid, false).length % 2 === 1; };
+  const cell = info.cell, half = info.plate.size / 2, lim = half + 3 * cell;
+  const root = stage.getObjectByName('SakuraQR-animation');
+  const petals = root.getObjectByName('petals');
+  const corners = [];
+  for (const x of [-0.25, 0.25]) for (const y of [-0.03, 0.03]) for (const z of [-0.25, 0.25]) corners.push(new THREE.Vector3(x, y, z));
+  const m4 = new THREE.Matrix4(), v = new THREE.Vector3(), seen = new Set();
+  const note = (list, what) => { if (list.length < 20) list.push(what); };
+  const walkers = [];
+  root.traverse(o => { if (o.isSkinnedMesh) walkers.push(o); });
+
+  for (let step = 0; step <= 90 * 30; step++) {
+    if (step) { timedUpdate(1 / 30, elapsed); elapsed += 1 / 30; }
+    if (step % 90) continue;
+    out.samples++;
+    stage.updateMatrixWorld(true);
+    for (const w of walkers) {
+      w.skeleton.update();
+      seen.clear();
+      const pos = w.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        w.getVertexPosition(i, v); w.localToWorld(v);
+        const k = v.x.toFixed(6) + v.y.toFixed(6) + v.z.toFixed(6);
+        if (seen.has(k)) continue; seen.add(k);
+        out.points++;
+        if (Math.abs(v.x) > lim || Math.abs(v.z) > lim || v.y < 0) note(out.outOfBounds, [w.name, step / 30, v.toArray()]);
+        if (v.y < info.plate.top + 0.02 * cell && (Math.abs(v.x) > half || Math.abs(v.z) > half)) note(out.offPlate, [w.name, step / 30, v.toArray()]);
+        if (inside(v)) note(out.insideTree, [w.name, step / 30, v.toArray().map(n => +(n / cell).toFixed(2))]);
+      }
+    }
+    for (let a = 0; a < walkers.length; a++) for (let b = a + 1; b < walkers.length; b++) {
+      const pa = new THREE.Vector3(), pb = new THREE.Vector3();
+      walkers[a].getWorldPosition(pa); walkers[b].getWorldPosition(pb);
+      if (pa.distanceTo(pb) < 2.2 * cell) out.walkerOverlap++;
+    }
+    for (let i = 0; i < petals.count; i++) {
+      petals.getMatrixAt(i, m4);
+      if (m4.elements[0] === 0 && m4.elements[1] === 0 && m4.elements[2] === 0) continue;   // hidden (scale 0)
+      m4.premultiply(petals.matrixWorld);
+      for (const c of corners) {
+        v.copy(c).applyMatrix4(m4);
+        out.points++;
+        if (Math.abs(v.x) > lim || Math.abs(v.z) > lim || v.y < 0) note(out.outOfBounds, ['petal ' + i, step / 30, v.toArray()]);
+        if (inside(v)) note(out.insideTree, ['petal ' + i, step / 30, v.toArray().map(n => +(n / cell).toFixed(2))]);
+      }
+      const e = m4.elements;
+      if (Math.abs(e[5]) > 0.99 * Math.hypot(e[4], e[5], e[6])) {        // lying flat → resting
+        const y = e[13] / cell;
+        if (y < info.plate.top / cell + 0.1) out.petalsLanded.plate++; else out.petalsLanded.canopy++;
+      }
+    }
+    await new Promise(r => setTimeout(r));
+  }
+  // dispose() must leave the stage as it found it; then set up again (same seed, same start)
+  anim.dispose();
+  out.stageAfterDispose = stage.children.map(o => o.name);
+  anim = await setup({ THREE, stage, tree, info, mode: qs.get('mode') || '3d' });
+  return out;
+}
+
+addEventListener('error', e => report.errors.push(String(e.message)));
+</script>
+</body>
+</html>

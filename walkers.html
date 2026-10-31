@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Walker model sheet</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #eef0f4; overflow: hidden; font: 13px/1.4 system-ui, sans-serif; color: #475066; }
+  canvas { display: block; }
+  .label { position: fixed; font-size: 12px; letter-spacing: .04em; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "./node_modules/three/build/three.module.js",
+  "three/addons/": "./node_modules/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+// Model sheet for assets/walker-*.glb: front, three-quarter, side and back of each figure.
+// ?t=seconds into the walk clip (default 0, the passing pose); ?spin=1 turns them slowly.
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const qs = new URLSearchParams(location.search);
+const NAMES = ['walker-blue', 'walker-red', 'walker-gold'];
+const VIEWS = [['FRONT', 0], ['THREE-QUARTER', -Math.PI / 4], ['SIDE', -Math.PI / 2], ['BACK', Math.PI]];
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.setScissorTest(true);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight('#ffffff', '#9a9aa8', 1.7));
+const sun = new THREE.DirectionalLight('#ffffff', 2);
+sun.position.set(2, 6, 5);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(22, 1, 0.1, 100);
+
+const loader = new GLTFLoader();
+const figs = await Promise.all(NAMES.map(n => loader.loadAsync('assets/' + n + '.glb')));
+const holders = figs.map((g, i) => {
+  const h = new THREE.Group();
+  h.add(g.scene);
+  h.visible = false;
+  scene.add(h);
+  const mixer = new THREE.AnimationMixer(g.scene);
+  mixer.clipAction(g.animations[0]).play();
+  mixer.update(+(qs.get('t') || 0));
+  return { h, mixer, name: NAMES[i] };
+});
+
+const labels = [];
+function label(text, x, y) {
+  const d = document.createElement('div');
+  d.className = 'label'; d.textContent = text; d.style.left = x + 'px'; d.style.top = y + 'px';
+  document.body.appendChild(d); labels.push(d);
+}
+const W = innerWidth, H = innerHeight, cw = W / 3, ch = (H - 24) / 4;
+holders.forEach((f, c) => label(f.name.replace('walker-', '').toUpperCase(), c * cw + 12, 6));
+VIEWS.forEach(([name], r) => label(name, 12, 24 + r * ch + 4));
+
+let last = performance.now();
+renderer.setAnimationLoop(now => {
+  const dt = (now - last) / 1000; last = now;
+  const spin = qs.get('spin') ? now / 3000 : 0;
+  if (qs.get('play')) holders.forEach(f => f.mixer.update(dt));
+  renderer.setClearColor('#eef0f4'); renderer.setScissor(0, 0, W, H); renderer.setViewport(0, 0, W, H); renderer.clear();
+  holders.forEach((f, c) => VIEWS.forEach(([, a], r) => {
+    holders.forEach(o => { o.h.visible = o === f; });
+    f.h.rotation.y = a + spin;
+    const x = c * cw, y = H - 24 - (r + 1) * ch;
+    renderer.setViewport(x, y, cw, ch); renderer.setScissor(x, y, cw, ch);
+    camera.aspect = cw / ch; camera.updateProjectionMatrix();
+    camera.position.set(0, 3.2, 14); camera.lookAt(0, 2.3, 0);
+    renderer.render(scene, camera);
+  }));
+  window.__ready = true;
+});
+</script>
+</body>
+</html>

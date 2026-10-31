@@ -1,0 +1,63 @@
+# mq-sakura-anim
+
+给 [SakuraQR](https://github.com/KiriKira/SakuraQR) 导出的方块樱花树（`.glb`）配的一段小动画。樱花花瓣从树冠里飘下来，三个方块小人在树下绕着树干你追我赶。动画写成一个 ES 模块 `scene.js`，可以放进别人的网页里跑，也可以用在 AR 里。
+
+- `index.html`：演示页，也是自检页
+- `walkers.html`：三个小人的模型图（正面、四分之三侧、侧面、背面）
+
+## 接口
+
+```js
+import setup from './scene.js';
+const { update, dispose } = await setup({ THREE, stage, tree, info, mode });
+// 每帧调用 update(dt, elapsed)，单位秒；用完调用 dispose()
+```
+
+- `stage` 是一个 `THREE.Group`，场景里的东西都加在它下面。
+- `tree` 是已经放进 stage 的树，只读，不会去动它。
+- `info` 就是 `tree.userData.sakuraqr`。
+- `mode` 传 `'3d'` 或 `'ar'`，两种模式下场景完全一样。
+- 渲染器、相机、相机控制、灯光、背景、地面都由宿主页面负责。scene.js 不碰 DOM，除了 `./assets/`（相对 scene.js 本身）不访问网络。
+- three.js 用 0.170.0，宿主页面的 import map 要提供 `three` 和 `three/addons/`。
+
+## 场景
+
+- **不放进树里。** 启动时把树自己的三角形按每格 4×4 的分辨率栅格化成竖直的“柱”，每根柱记下哪几段高度是实心的。花瓣和小人只会移动到这些柱显示为空的地方，所以别的码长出来的树也能直接用。
+- **花瓣。** 240 片，两种粉色，用一个 InstancedMesh 画。花瓣从树冠顶面或树冠下沿冒出来，被风吹着边转边落，落在底座或树冠顶上。停几秒后缩小消失（材质只用不透明的，所以用缩小代替淡出），再从树冠里重新出现。小人跑过时会把地上的花瓣踢起来。
+- **小人。** `assets/walker-{blue,red,gold}.glb`，配色照参考像素小人：蓝色兜帽、红色法师帽、带角的金色头盔。每个小人是一个蒙皮网格，带一段 `walk` 循环动画：摆臂、迈腿、身体上下晃，脚不会陷进地面。
+  - 小人沿一条绕树干的环路跑，大约在树干到底座边缘一半的位置，遇到低矮的树枝和树根会绕开。
+  - 蓝色领跑，红色和金色紧跟在后面，彼此忽近忽远。
+  - 模型由 `npm run walkers`（`tools/make-walkers.mjs`）生成。精度是每格 8 个体素，同色的面会合并成大矩形，所以三角形不多。单位是“格”（1 = `info.cell`）。
+- 随机数用固定种子，每次打开都一样。只用不透明材质，不加灯也不做后处理。对示例树，场景自身一共 4 次绘制调用，约 5 千个三角形。
+
+## 本地运行和自检
+
+```sh
+npm install                 # three@0.170.0，演示页的 import map 指向 node_modules
+python3 -m http.server      # 打开 http://localhost:8000/
+node test/shots.mjs         # 无头 Chromium 跑自检，截图到 screenshots/
+```
+
+演示页参数：
+
+- `?view=ne|nw|se|sw|top|w0|w1|w2|group`：机位，后几个是对准小人的特写
+- `?t=秒`：开场前先按固定步长快进
+- `?pause=1`：快进后停住
+- `?mode=ar`：传给 `setup()` 的 `mode`
+- `?tree=路径`：换一棵树
+
+`?test=1` 会让动画按固定步长快进 90 秒，每 3 秒检查一次：
+
+- 每个小人的每个顶点（蒙皮之后）和每片花瓣的每个角，用向上的射线数穿过树的次数来判断是否在树里面。这个判断不依赖 scene.js 自己的碰撞柱。
+- 有没有东西超出底座 3 格，或者低于 y = 0。
+- 小人有没有走出底座，彼此有没有撞上。
+- 绘制调用、三角形数和 `update()` 的耗时。
+- `dispose()` 之后 stage 里是不是只剩下树。
+
+控制台出现报错或警告、或者访问了本地服务以外的网址，也算失败。`node test/field-debug.mjs` 会用文字打印碰撞柱和环路的长度。
+
+## 部署
+
+`.github/workflows/pages.yml` 在推送到 `main` 时构建并发布 GitHub Pages：执行 `npm ci`，把 import map 用到的几个 three.js 文件按原路径复制进站点，然后部署。第一次需要在仓库的 Settings → Pages 里把 Source 设成 “GitHub Actions”。
+
+`tree.glb` 是示例树，只给演示页用，不属于动画资源。
