@@ -19,7 +19,7 @@
 <body>
 <script type="module">
 // Model sheet for assets/walker-*.glb: front, three-quarter, side and back of each figure.
-// ?t=seconds into the walk clip (default 0, the passing pose); ?spin=1 turns them slowly.
+// ?clip=run|look|hop (default run); ?t=seconds into the clip (default 0); ?play=1 animates; ?spin=1 turns them slowly.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
@@ -49,7 +49,7 @@ const holders = figs.map((g, i) => {
   h.visible = false;
   scene.add(h);
   const mixer = new THREE.AnimationMixer(g.scene);
-  mixer.clipAction(g.animations[0]).play();
+  mixer.clipAction(THREE.AnimationClip.findByName(g.animations, qs.get('clip') || 'run') || g.animations[0]).play();
   mixer.update(+(qs.get('t') || 0));
   return { h, mixer, name: NAMES[i] };
 });

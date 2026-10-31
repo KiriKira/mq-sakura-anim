@@ -1,8 +1,9 @@
 // Builds the three walking figures for scene.js as glTF binaries: node tools/make-walkers.mjs
 //
 // Each figure is a voxel model (8 voxels per tree cube) skinned rigidly to five joints — hips, two arms, two legs —
-// with one looping "run" clip: the body leans and twists, legs and arms swing wide, the hips bounce, and each
-// frame the figure is lifted just enough that nothing ever dips below the ground. One mesh, one material (vertex colours) per figure; faces of the same
+// with three looping clips — "run" (lean, twist, wide swings, a bounce), "look" (standing, gazing up, each with
+// its own gesture) and "hop" (happy skipping) — and in every frame the figure is lifted just enough that
+// nothing ever dips below the ground. One mesh, one material (vertex colours) per figure; faces of the same
 // colour are merged into larger rectangles (greedy meshing) to keep the triangle count low.
 //
 // The look follows the three reference sprites: a blue hooded healer with a white-framed crest and swinging pigtails,
@@ -29,6 +30,9 @@ const BRAID_FLICK = 24 * Math.PI / 180;   // how far they flick up and down with
 const BRAID_LAG = 1.3;                     // radians behind the bounce
 const BRAID_SWAY = 10 * Math.PI / 180;
 const BRAID_TRAIL = 30 * Math.PI / 180;   // swept back by the run
+const HOP_CYCLE = 0.9;          // seconds per skipping cycle (a skip on each foot)
+const HOP_HEIGHT = 5;           // voxels
+const HOP_STRIDE = 2.0;         // cubes travelled per cycle at clip speed 1
 const STRIDE_GAIN = 1.0;      // stride per cycle, relative to how far the legs reach
 const KEYS = 24;
 
@@ -280,60 +284,110 @@ const qRot = (q, v) => {
   return [v[0] + w * tx + y * tz - z * ty, v[1] + w * ty + z * tx - x * tz, v[2] + w * tz + x * ty - y * tx];
 };
 
-// A run cycle: the body leans forward and twists with the arms, legs and arms swing wide (arms held a little
-// forward), and the body is highest when the legs are spread (the moment both feet are off the ground) and
-// lowest as a leg passes under it. Each key, the whole figure is posed and the hips lifted so that its lowest
-// vertex sits exactly on y = 0 at the lowest point of the bounce, so nothing ever sinks into the ground.
-function animation(m) {
-  const X = [1, 0, 0], Y = [0, 1, 0];
-  const keys = [];
+const X = [1, 0, 0], Y = [0, 1, 0], Z = [0, 0, 1];
+
+// Pigtails (the braid joints; only the blue figure has any): hang at `lift`, swept back by `trail`.
+const braids = (lift, trail, sway = 0) => [1, -1].map(side => qMul(qAxis(Y, side * trail), qAxis(Z, side * (lift + side * sway))));
+
+// Poses: u in [0, 1) through the cycle -> { limb: [armP, armN, legP, legN, braidP, braidN] quaternions, hipQ, bounce }.
+//
+// run: the body leans forward and twists with the arms, legs and arms swing wide (arms held a little forward),
+// and the body is highest when the legs are spread (both feet off the ground) and lowest as a leg passes under it.
+function runPose(u) {
+  const ph = 2 * Math.PI * u, s = Math.sin(ph);
+  const legA = LEG_SWING * s, armA = ARM_SWING * s;
+  const limb = [-armA - ARM_FORWARD, armA - ARM_FORWARD, legA, -legA].map(a => qAxis(X, a));
+  // pigtails flick up a beat after each bounce, trail behind, and sway with the body's twist
+  for (const side of [1, -1]) {
+    const lift = BRAID_LIFT + BRAID_FLICK * Math.cos(2 * ph - BRAID_LAG) + side * BRAID_SWAY * s;
+    limb.push(qMul(qAxis(Y, side * (BRAID_TRAIL + 0.1 * Math.sin(2 * ph))), qAxis(Z, side * lift)));
+  }
+  return { limb, hipQ: qMul(qAxis(Y, -TWIST * s), qAxis(X, LEAN)), bounce: BOUNCE * (1 - Math.cos(2 * ph)) / 2 };
+}
+
+// look: standing still, leaning back to gaze up at the sky, breathing; each figure has its own gesture —
+// blue points up, red clasps her hands in front, gold throws both arms up.
+function lookPose(name) {
+  return u => {
+    const ph = 2 * Math.PI * u, s = Math.sin(ph), c = Math.cos(ph);
+    const deg = Math.PI / 180;
+    let arms;
+    // (a raised arm on the +x side tilts outward with a negative turn about Z)
+    if (name === 'walker-blue') arms = [qMul(qAxis(Z, -24 * deg), qAxis(X, (-158 + 5 * s) * deg)), qAxis(X, (-8 + 3 * s) * deg)];
+    else if (name === 'walker-red') arms = [qMul(qAxis(Z, -16 * deg), qAxis(X, -42 * deg)), qMul(qAxis(Z, 16 * deg), qAxis(X, -42 * deg))];
+    else arms = [qMul(qAxis(Z, (-30 - 8 * s) * deg), qAxis(X, -170 * deg)), qMul(qAxis(Z, (30 + 8 * s) * deg), qAxis(X, -170 * deg))];
+    return {
+      limb: [...arms, qAxis(X, 0), qAxis(X, 0), ...braids(-62 * deg + 4 * deg * s, 4 * deg, 3 * deg * c)],
+      hipQ: qMul(qAxis(Y, 4 * deg * s), qAxis(X, (-9 + 1.5 * c) * deg)),
+      bounce: 0.35 * (1 - c) / 2
+    };
+  };
+}
+
+// hop: happy skipping — a skip on each foot per cycle, opposite arm and leg forward as in walking: the leg in front
+// lifted, the arm on the other side swung up and forward (tilted out), the arm on the leg's side swung down and
+// back and opened slightly outward. The body springs up off each foot, highest as the legs are furthest apart.
+function hopPose(u) {
+  const deg = Math.PI / 180;
+  const s = Math.sin(2 * Math.PI * u);                // > 0: the +x leg is in front
+  const air = Math.sin(Math.PI * ((2 * u) % 1));      // 0 at each push-off, 1 at the top of each skip
+  const leg = x => (x > 0 ? -40 : -14) * x;           // forward lifted more than back
+  // an arm: x < 0 swings up and forward (tilted out), x > 0 down and back (opened out); side +1 for the +x arm
+  const arm = (x, side) => qMul(qAxis(Z, side * (x > 0 ? 18 : 26) * x * deg), qAxis(X, (x > 0 ? 38 : 145) * x * deg));
+  return {
+    limb: [arm(s, 1), arm(-s, -1), qAxis(X, leg(s) * deg), qAxis(X, leg(-s) * deg),
+      ...braids((-30 + 34 * Math.sin(Math.PI * ((2 * u + 0.75) % 1))) * deg, 20 * deg, 6 * deg * s)],
+    hipQ: qMul(qAxis(Y, -6 * deg * s), qAxis(X, (5 - 4 * air) * deg)),
+    bounce: HOP_HEIGHT * air
+  };
+}
+
+// Samples a pose function over one cycle. Each key, the whole figure is posed and the hips lifted so that its
+// lowest vertex sits exactly on y = 0, plus the pose's bounce, so nothing ever sinks into the ground.
+function clip(m, name, cycle, pose) {
+  const times = [], hips = [], hipRot = [], rot = PIVOTS.slice(1).map(() => []);
+  let height = 0, radius = 0;
   for (let i = 0; i <= KEYS; i++) {
-    const ph = 2 * Math.PI * i / KEYS, s = Math.sin(ph);
-    const legA = LEG_SWING * s, armA = ARM_SWING * s;
-    const limb = [-armA - ARM_FORWARD, armA - ARM_FORWARD, legA, -legA].map(a => qAxis(X, a));
-    // pigtails: hang down, flick up a beat after each bounce, trail behind, and sway with the body's twist
-    for (const side of [1, -1]) {
-      const lift = BRAID_LIFT + BRAID_FLICK * Math.cos(2 * ph - BRAID_LAG) + side * BRAID_SWAY * s;
-      limb.push(qMul(qAxis(Y, side * (BRAID_TRAIL + 0.1 * Math.sin(2 * ph))), qAxis([0, 0, 1], side * lift)));
-    }
-    const hipQ = qMul(qAxis(Y, -TWIST * s), qAxis(X, LEAN));
-    const bounce = BOUNCE * (1 - Math.cos(2 * ph)) / 2;
-    // lowest vertex with the hips at their pivot height
+    const k = pose((i % KEYS) / KEYS);
     let low = Infinity;
     const posed = [];
-    for (let k = 0; k < m.pos.length; k += 3) {
-      const j = m.jnt[(k / 3) * 4];
-      let v = [m.pos[k] / V, m.pos[k + 1] / V, m.pos[k + 2] / V];
+    for (let n = 0; n < m.pos.length; n += 3) {
+      const j = m.jnt[(n / 3) * 4];
+      let v = [m.pos[n] / V, m.pos[n + 1] / V, m.pos[n + 2] / V];
       if (j) {
         const p = PIVOTS[j];
-        v = qRot(limb[j - 1], [v[0] - p[0], v[1] - p[1], v[2] - p[2]]);
+        v = qRot(k.limb[j - 1], [v[0] - p[0], v[1] - p[1], v[2] - p[2]]);
         v = [v[0] + p[0] - PIVOTS[HIPS][0], v[1] + p[1] - PIVOTS[HIPS][1], v[2] + p[2] - PIVOTS[HIPS][2]];
       } else v = [v[0] - PIVOTS[HIPS][0], v[1] - PIVOTS[HIPS][1], v[2] - PIVOTS[HIPS][2]];
-      const w = qRot(hipQ, v);
+      const w = qRot(k.hipQ, v);
       w[1] += PIVOTS[HIPS][1];
       posed.push(w);
       low = Math.min(low, w[1]);
     }
-    keys.push({ limb, hipQ, bounce, low, posed });
-  }
-  // lift each key so its lowest point is on the ground, then add the bounce on top
-  const times = [], hips = [], hipRot = [], rot = PIVOTS.slice(1).map(() => []);
-  let height = 0, radius = 0;
-  keys.forEach((k, i) => {
-    const lift = -k.low + k.bounce + 0.04;
-    for (const w of k.posed) { height = Math.max(height, (w[1] + lift) * V); radius = Math.max(radius, Math.hypot(w[0], w[2]) * V); }
-    times.push(CYCLE * i / KEYS);
+    const lift = -low + k.bounce + 0.04;
+    for (const w of posed) { height = Math.max(height, (w[1] + lift) * V); radius = Math.max(radius, Math.hypot(w[0], w[2]) * V); }
+    times.push(cycle * i / KEYS);
     hips.push(0, (PIVOTS[HIPS][1] + lift) * V, 0);
     hipRot.push(...k.hipQ);
     k.limb.forEach((q, j) => rot[j].push(...q));
-  });
-  const stride = STRIDE_GAIN * 4 * PIVOTS[LEG_P][1] * V * Math.sin(LEG_SWING);
-  return { times, hips, hipRot, rot, stride, height, radius };
+  }
+  return { name, cycle, times, hips, hipRot, rot, height, radius };
+}
+
+function animation(m, name) {
+  const clips = [clip(m, 'run', CYCLE, runPose), clip(m, 'look', 2.4, lookPose(name)), clip(m, 'hop', HOP_CYCLE, hopPose)];
+  return {
+    clips,
+    height: Math.max(...clips.map(c => c.height)),
+    radius: Math.max(...clips.map(c => c.radius)),
+    stride: STRIDE_GAIN * 4 * PIVOTS[LEG_P][1] * V * Math.sin(LEG_SWING),
+    hopStride: HOP_STRIDE
+  };
 }
 
 function glb({ name, f }) {
   const m = mesh(f.parts);
-  const anim = animation(m);
+  const anim = animation(m, name);
   const maxY = anim.height, maxR = anim.radius;
 
   const chunks = [], views = [], accessors = [];
@@ -373,14 +427,22 @@ function glb({ name, f }) {
   });
   const aIbm = acc(ibm, 'MAT4', F, PIVOTS.length);
 
-  const aTime = acc(new Float32Array(anim.times), 'SCALAR', F, anim.times.length, { min: [0], max: [CYCLE] });
-  const aHips = acc(new Float32Array(anim.hips), 'VEC3', F, anim.times.length);
-  const aHipRot = acc(new Float32Array(anim.hipRot), 'VEC4', F, anim.times.length);
-  const aRot = anim.rot.map(r => acc(new Float32Array(r), 'VEC4', F, anim.times.length));
-
+  const animations = anim.clips.map(c => {
+    const aTime = acc(new Float32Array(c.times), 'SCALAR', F, c.times.length, { min: [0], max: [c.cycle] });
+    const aHips = acc(new Float32Array(c.hips), 'VEC3', F, c.times.length);
+    const aHipRot = acc(new Float32Array(c.hipRot), 'VEC4', F, c.times.length);
+    const aRot = c.rot.map(r => acc(new Float32Array(r), 'VEC4', F, c.times.length));
+    return {
+      name: c.name,
+      samplers: [aHips, aHipRot, ...aRot].map(o => ({ input: aTime, output: o, interpolation: 'LINEAR' })),
+      channels: [{ sampler: 0, target: { node: 2, path: 'translation' } }, { sampler: 1, target: { node: 2, path: 'rotation' } },
+        ...aRot.map((_, j) => ({ sampler: j + 2, target: { node: 3 + j, path: 'rotation' } }))]
+    };
+  });
   // nodes: 0 root, 1 mesh, 2 hips, 3.. limbs
   const nodes = [
-    { name, children: [1, 2], extras: { unit: '1 = one tree cube (info.cell)', height: +maxY.toFixed(4), radius: +maxR.toFixed(4), stride: +anim.stride.toFixed(4), cycle: CYCLE } },
+    { name, children: [1, 2], extras: { unit: '1 = one tree cube (info.cell)', height: +maxY.toFixed(4), radius: +maxR.toFixed(4), stride: +anim.stride.toFixed(4), cycle: CYCLE,
+      clips: { run: { stride: +anim.stride.toFixed(4), cycle: CYCLE }, look: { cycle: 2.4 }, hop: { stride: anim.hopStride, cycle: HOP_CYCLE } } } },
     { name: name + '-mesh', mesh: 0, skin: 0 },
     { name: 'hips', translation: world[HIPS], children: PIVOTS.slice(1).map((_, j) => 3 + j) }
   ];
@@ -393,12 +455,7 @@ function glb({ name, f }) {
     meshes: [{ name, primitives: [{ attributes: { POSITION: aPos, NORMAL: aNor, COLOR_0: aCol, JOINTS_0: aJnt, WEIGHTS_0: aWgt }, indices: aIdx, material: 0 }] }],
     materials: [{ name, pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1], metallicFactor: 0, roughnessFactor: 0.9 } }],
     skins: [{ joints: PIVOTS.map((_, j) => 2 + j), inverseBindMatrices: aIbm, skeleton: 2 }],
-    animations: [{
-      name: 'run',
-      samplers: [aHips, aHipRot, ...aRot].map(o => ({ input: aTime, output: o, interpolation: 'LINEAR' })),
-      channels: [{ sampler: 0, target: { node: 2, path: 'translation' } }, { sampler: 1, target: { node: 2, path: 'rotation' } },
-        ...aRot.map((_, j) => ({ sampler: j + 2, target: { node: 3 + j, path: 'rotation' } }))]
-    }],
+    animations,
     accessors, bufferViews: views, buffers: [{ byteLength: offset }]
   };
   let json = Buffer.from(JSON.stringify(gltf));

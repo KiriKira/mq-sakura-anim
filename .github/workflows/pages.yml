@@ -31,7 +31,8 @@ jobs:
         run: |
           set -e
           mkdir -p _site/node_modules/three/build _site/node_modules/three/examples/jsm/{loaders,controls,utils}
-          cp -r index.html walkers.html scene.js tree.glb assets _site/
+          cp -r index.html walkers.html whale.html scene.js tree.glb assets _site/
+          if [ -d audio ]; then cp -r audio _site/; fi
           cp node_modules/three/build/three.module.js _site/node_modules/three/build/
           cp node_modules/three/examples/jsm/loaders/GLTFLoader.js _site/node_modules/three/examples/jsm/loaders/
           cp node_modules/three/examples/jsm/controls/OrbitControls.js _site/node_modules/three/examples/jsm/controls/

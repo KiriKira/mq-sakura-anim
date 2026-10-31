@@ -8,6 +8,24 @@
   html, body { margin: 0; height: 100%; background: #f4ede9; overflow: hidden; font: 13px/1.4 system-ui, sans-serif; }
   canvas { display: block; }
   #hud { position: fixed; left: 8px; bottom: 8px; color: #6b4b4b; background: #fffc; padding: 4px 8px; border-radius: 6px; white-space: pre; }
+  #music { position: fixed; top: 12px; right: 12px; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 24px);
+    padding: 7px 14px 7px 10px; border: 0; border-radius: 999px; background: #fffd; color: #6b3b4b; font: 500 13px/1.2 system-ui, sans-serif;
+    box-shadow: 0 2px 10px #b0707033; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  #music[hidden] { display: none; }
+  #music:hover { background: #fff; }
+  #music:disabled { cursor: default; opacity: .6; }
+  #music .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #music .icon { position: relative; width: 16px; height: 14px; flex: none; display: flex; align-items: flex-end; gap: 2px; }
+  #music .bar { width: 3px; height: 4px; border-radius: 1px; background: #e0567f; }
+  #music.playing .bar { animation: eq .9s ease-in-out infinite; }
+  #music.playing .bar:nth-child(2) { animation-delay: -.3s; }
+  #music.playing .bar:nth-child(3) { animation-delay: -.6s; }
+  #music.playing .bar:nth-child(4) { animation-delay: -.45s; }
+  @keyframes eq { 0%, 100% { height: 4px; } 50% { height: 14px; } }
+  #music:not(.playing) .bar { display: none; }
+  #music:not(.playing) .icon::before { content: ''; position: absolute; left: 3px; top: 1px; border-style: solid;
+    border-width: 6px 0 6px 10px; border-color: transparent transparent transparent #e0567f; }
+  @media (prefers-reduced-motion: reduce) { #music.playing .bar { animation: none; height: 9px; } }
 </style>
 <!-- three 0.170.0 from node_modules (npm install), no CDN -->
 <script type="importmap">
@@ -19,10 +37,16 @@
 </head>
 <body>
 <div id="hud"></div>
+<button id="music" type="button" hidden aria-label="背景音乐：muque - いいんじゃない（点击暂停或继续）" title="点击暂停 / 继续">
+  <span class="icon"><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span></span>
+  <span class="label">muque - いいんじゃない</span>
+</button>
 <script type="module">
 // Demo host for scene.js (also what test/shots.mjs drives). Query parameters:
-//   view = ne | nw | se | sw | top   camera preset (default: free orbit from ne); w0 | w1 | w2 | group close-up of the walkers
-//   t    = seconds to fast-forward with fixed 1/30 s steps before showing (default 0)
+//   view = ne | nw | se | sw | top   camera preset (default: free orbit from ne); w0 | w1 | w2 | group close-up of the walkers;
+//          wide: further out and higher, to see the whale
+//   t    = song time to start at: fast-forwards with fixed 1/30 s steps (default 0)
+//   nomusic = 1                       no background music; the show runs on scene.js's own clock
 //   pause = 1                         stop the clock after fast-forwarding (for screenshots)
 //   test = 1                          run the self-check (see check() below) and put the result in window.__report
 //   mode = 3d | ar                    passed through to setup()
@@ -69,6 +93,12 @@ const VIEWS = {
   ne: [1, 1], nw: [-1, 1], se: [1, -1], sw: [-1, -1]
 };
 function placeCamera(view) {
+  if (view === 'wide') {
+    controls.target.set(0, 0.03, 0);
+    camera.position.set(0.16, 0.085, 0.19);
+    camera.lookAt(controls.target); controls.update();
+    return;
+  }
   const d = 0.135;
   if (view === 'top') { camera.position.set(0, d * 1.05, 0.00001); controls.target.set(0, 0, 0); }
   else {
@@ -98,11 +128,31 @@ const info = tree.userData.sakuraqr;
 
 let anim = await setup({ THREE, stage, tree, info, mode: qs.get('mode') || '3d' });
 
+// ---- background music -------------------------------------------------------------------------------------------
+// Loops audio/bgm.mp3 and drives the show from its position. Browsers only allow sound after the viewer has
+// interacted with the page, so if autoplay is refused the button waits in the paused state for a tap; until the song
+// has started once, the show runs on scene.js's own clock. Paused, the story holds where the song is.
+const music = { started: false, ok: false };
+const bgm = qs.get('nomusic') || qs.get('test') ? null : new Audio('audio/bgm.mp3');
+const btn = document.getElementById('music');
+if (bgm) {
+  bgm.loop = true;
+  bgm.preload = 'auto';
+  const show = () => { btn.classList.toggle('playing', !bgm.paused); btn.title = bgm.paused ? '点击继续播放' : '点击暂停'; };
+  bgm.addEventListener('play', () => { music.started = true; show(); });
+  bgm.addEventListener('pause', show);
+  bgm.addEventListener('canplay', () => { music.ok = true; btn.hidden = false; }, { once: true });
+  bgm.addEventListener('error', () => { btn.hidden = true; music.ok = false; });
+  btn.addEventListener('click', () => { if (bgm.paused) bgm.play().catch(() => {}); else bgm.pause(); });
+  bgm.play().catch(() => show());        // autoplay refused: wait for a tap
+}
+const showTime = () => (bgm && music.started && music.ok ? bgm.currentTime : undefined);
+
 // timing of update()
 const times = [];
-function timedUpdate(dt, elapsed) {
+function timedUpdate(dt, elapsed, show) {
   const t0 = performance.now();
-  anim.update(dt, elapsed);
+  anim.update(dt, elapsed, show);
   times.push(performance.now() - t0);
 }
 
@@ -110,13 +160,14 @@ let elapsed = 0;
 const ff = +(qs.get('t') || 0);
 const report = { errors: [] };
 if (qs.get('test')) Object.assign(report, await check());
-else for (; elapsed < ff; elapsed += 1 / 30) timedUpdate(1 / 30, elapsed);
+else for (; elapsed < ff; elapsed += 1 / 30) timedUpdate(1 / 30, elapsed, elapsed);
 
 // view = w0 | w1 | w2: close-up of one walker; group: all three. Seen from outside the tree, looking in.
 const wv = /^w(\d)$|^group$/.exec(qs.get('view') || '');
 if (wv) {
   const walkers = [];
-  stage.traverse(o => { if (o.isSkinnedMesh) walkers.push(o.parent); });
+  const whaleObj = stage.getObjectByName('whale');
+  stage.traverse(o => { if (o.isSkinnedMesh && !(whaleObj && whaleObj.getObjectById(o.id))) walkers.push(o.parent); });
   stage.updateMatrixWorld(true);
   const list = wv[1] !== undefined ? [walkers[+wv[1]]] : walkers;
   const p = new THREE.Vector3();
@@ -133,7 +184,7 @@ const paused = !!qs.get('pause');
 let last = performance.now(), frames = 0;
 renderer.setAnimationLoop(now => {
   const dt = Math.min((now - last) / 1000, 0.1); last = now;
-  if (!paused) { elapsed += dt; timedUpdate(dt, elapsed); }
+  if (!paused) { elapsed += dt; timedUpdate(dt, elapsed, showTime()); }
   controls.update();
   renderer.render(scene, camera);
   if (++frames === 3) {
@@ -156,7 +207,7 @@ renderer.setAnimationLoop(now => {
 //  * do two walkers ever come closer than their radii allow?
 async function check() {
   stage.getObjectByName('SakuraQR-animation').userData.stats.where = [];
-  const out = { samples: 0, points: 0, insideTree: [], outOfBounds: [], offPlate: [], walkerOverlap: 0, petalsAboveCanopy: 0, aboveCanopy: [], petalsFloating: 0, floating: [], petalsLanded: { plate: 0, canopy: 0 } };
+  const out = { samples: 0, points: 0, insideTree: [], outOfBounds: [], offPlate: [], walkerOverlap: 0, showErrors: [], timeline: [], whaleLowest: Infinity, petalsAboveCanopy: 0, aboveCanopy: [], petalsFloating: 0, floating: [], petalsLanded: { plate: 0, canopy: 0 } };
   const solid = [];
   tree.updateMatrixWorld(true);
   tree.traverse(o => {
@@ -177,11 +228,13 @@ async function check() {
   const prevPos = [];
   const note = (list, what) => { if (list.length < 20) list.push(what); };
   const walkers = [];
-  root.traverse(o => { if (o.isSkinnedMesh) walkers.push(o); });
+  let whaleMesh = null;
+  root.getObjectByName('whale').traverse(o => { if (o.isMesh) whaleMesh = o; });
+  root.traverse(o => { if (o.isSkinnedMesh && o !== whaleMesh) walkers.push(o); });
   out.walkersShown = walkers.length === 3 && walkers.every(w => w.parent.visible);
 
   for (let step = 0; step <= 90 * 30; step++) {
-    if (step) { timedUpdate(1 / 30, elapsed); elapsed += 1 / 30; }
+    if (step) { elapsed += 1 / 30; timedUpdate(1 / 30, elapsed, elapsed); }   // song time = elapsed
     if (step % 90 === 89) {                   // remember where every petal is, one frame before each sample
       for (let i = 0; i < petals.count; i++) { petals.getMatrixAt(i, m4); m4.premultiply(petals.matrixWorld); prevPos[i] = [m4.elements[12], m4.elements[13], m4.elements[14]]; }
     }
@@ -201,6 +254,34 @@ async function check() {
         if (v.y < info.plate.top + 0.02 * cell && (Math.abs(v.x) > half || Math.abs(v.z) > half)) note(out.offPlate, [w.name, step / 30, v.toArray()]);
         if (inside(v)) note(out.insideTree, [w.name, step / 30, v.toArray().map(n => +(n / cell).toFixed(2))]);
       }
+    }
+    // the show: the whale is up from 17 s to 63 s; the runners look at it from ~21 to ~28.5 s, run before and after,
+    // and hop from ~64 s
+    const t = elapsed, whale = root.getObjectByName('whale');
+    const whaleUp = whale.visible;
+    if (whaleUp !== (t >= 17 && t < 62.9)) note(out.showErrors, ['whale visible ' + whaleUp, +t.toFixed(2)]);
+    const expect = t >= 21.5 && t <= 28.5 ? 'look' : t >= 64 ? 'hop' : (t < 19.4 || (t >= 30 && t < 63)) ? 'run' : null;
+    const runners = root.userData.runners || [];
+    runners.forEach((r, i) => {
+      if (expect && r.act !== expect) note(out.showErrors, ['runner ' + i + ' ' + r.act + ' (expected ' + expect + ')', +t.toFixed(2)]);
+      if (expect === 'look' && r.v > 0.01) note(out.showErrors, ['runner ' + i + ' moving while watching', +t.toFixed(2)]);
+    });
+    out.timeline.push([+t.toFixed(1), whaleUp ? 'whale' : '-', runners.map(r => r.act).join(',')]);
+    if (whaleUp && whaleMesh) {                     // the whale: never in the tree, never past plate + 3 cubes
+      whaleMesh.skeleton && whaleMesh.skeleton.update();
+      seen.clear();
+      const pos = whaleMesh.geometry.attributes.position;
+      let low = Infinity;
+      for (let i = 0; i < pos.count; i++) {
+        whaleMesh.getVertexPosition(i, v); whaleMesh.localToWorld(v);
+        const k = v.x.toFixed(6) + v.y.toFixed(6) + v.z.toFixed(6);
+        if (seen.has(k)) continue; seen.add(k);
+        out.points++;
+        low = Math.min(low, v.y);
+        if (Math.abs(v.x) > lim || Math.abs(v.z) > lim || v.y < 0) note(out.outOfBounds, ['whale', +t.toFixed(2), v.toArray().map(n => +(n / cell).toFixed(2))]);
+        if (inside(v)) note(out.insideTree, ['whale', +t.toFixed(2), v.toArray().map(n => +(n / cell).toFixed(2))]);
+      }
+      out.whaleLowest = Math.min(out.whaleLowest, low / cell);
     }
     for (let a = 0; a < walkers.length; a++) for (let b = a + 1; b < walkers.length; b++) {
       const pa = new THREE.Vector3(), pb = new THREE.Vector3();

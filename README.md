@@ -1,16 +1,17 @@
 # mq-sakura-anim
 
-给 [SakuraQR](https://github.com/KiriKira/SakuraQR) 导出的方块樱花树（`.glb`）配的一段小动画。樱花花瓣从树冠里飘下来，三个方块小人在树下绕着树干你追我赶。动画写成一个 ES 模块 `scene.js`，可以放进别人的网页里跑，也可以用在 AR 里。
+给 [SakuraQR](https://github.com/KiriKira/SakuraQR) 导出的方块樱花树（`.glb`）配的一段小动画。樱花花瓣从树冠里飘下来，三个方块小人在树下绕着树干你追我赶。动画会配合背景音乐 muque「いいんじゃない」演出：一头巨大的鲸鱼从高空游下来，绕着树冠游动，三人停下来看，然后鲸鱼游走，三人继续往前蹦蹦跳跳。动画写成一个 ES 模块 `scene.js`，可以放进别人的网页里跑，也可以用在 AR 里。
 
 - `index.html`：演示页，也是自检页
-- `walkers.html`：三个小人的模型图（正面、四分之三侧、侧面、背面）
+- `walkers.html`：三个小人的模型图（正面、四分之三侧、侧面、背面），`?clip=run|look|hop` 切换动作
+- `whale.html`：鲸鱼的模型图
 
 ## 接口
 
 ```js
 import setup from './scene.js';
-const { update, dispose } = await setup({ THREE, stage, tree, info, mode });
-// 每帧调用 update(dt, elapsed)，单位秒；用完调用 dispose()
+const { update, dispose } = await setup({ THREE, stage, tree, info, mode, showLength });
+// 每帧调用 update(dt, elapsed, showTime)，单位秒；用完调用 dispose()
 ```
 
 - `stage` 是一个 `THREE.Group`，场景里的东西都加在它下面。
@@ -18,6 +19,7 @@ const { update, dispose } = await setup({ THREE, stage, tree, info, mode });
 - `info` 就是 `tree.userData.sakuraqr`。
 - `mode` 传 `'3d'` 或 `'ar'`，两种模式下场景完全一样。
 - 渲染器、相机、相机控制、灯光、背景、地面都由宿主页面负责。scene.js 不碰 DOM，除了 `./assets/`（相对 scene.js 本身）不访问网络。
+- `showTime` 是歌曲当前播放到的位置（比如 `audio.currentTime`），演出跟着它走，所以暂停、拖动进度、循环都能对上。不传时，演出用自己的时钟，每 `showLength` 秒（默认 90）循环一次。
 - three.js 用 0.170.0，宿主页面的 import map 要提供 `three` 和 `three/addons/`。
 
 ## 场景
@@ -30,6 +32,21 @@ const { update, dispose } = await setup({ THREE, stage, tree, info, mode });
   - 模型由 `npm run walkers`（`tools/make-walkers.mjs`）生成。精度是每格 8 个体素，同色的面会合并成大矩形，所以三角形不多。单位是“格”（1 = `info.cell`）。
 - 随机数用固定种子，每次打开都一样。只用不透明材质，不加灯也不做后处理。对示例树，场景自身一共 4 次绘制调用，约 5 千个三角形。
 
+## 演出（按歌曲时间）
+
+| 时间 | 演出 |
+|---|---|
+| 0 – 17 秒 | 三人绕着树干追着跑 |
+| 17 – 20 秒 | 鲸鱼从高空俯冲下来，到 20 秒刚好进入绕树冠的圆圈 |
+| 约 19.6 – 29 秒 | 三人依次减速、停下，转身看鲸鱼：蓝色举手指着，红色双手合在胸前，金色举起双手欢呼 |
+| 约 29 秒 | 看腻了，蓝色先跑起来，另外两个跟上；鲸鱼继续绕圈 |
+| 55.5 – 63 秒 | 鲸鱼一边绕圈一边抬头往上游，63 秒时完全消失 |
+| 63 秒 – 曲终 | 三人改成蹦蹦跳跳地前进（左右手脚交替），直到歌曲循环 |
+
+- **鲸鱼**（`assets/whale.glb`，`tools/make-whale.mjs` 生成）：每格 2 个体素，约 25 格长，带一段 2.4 秒的 `swim` 循环。动画是上下摆尾，鳍跟着拍，头微微点；脊椎分成几节，节与节之间的顶点按两边关节各占一半来混合，弯起来没有裂缝。
+- 鲸鱼绕树干游，方向和小人相反。游动时身体向内侧倾斜，脊椎往圆心方向弯，贴着圆弧走。整头鲸鱼一直在树冠上方，水平方向不超出底座 3 格。
+- 俯冲和上升时，头朝下或朝上最多 40°，并且会按俯仰角度额外抬高，尾巴和头不会碰到树冠。最后 1.4 秒在高空缩小消失。
+
 ## 本地运行和自检
 
 ```sh
@@ -40,10 +57,11 @@ node test/shots.mjs         # 无头 Chromium 跑自检，截图到 screenshots/
 
 演示页参数：
 
-- `?view=ne|nw|se|sw|top|w0|w1|w2|group`：机位，后几个是对准小人的特写
-- `?t=秒`：开场前先按固定步长快进
+- `?view=ne|nw|se|sw|top|wide|w0|w1|w2|group`：机位。`wide` 拉远看鲸鱼，后几个是对准小人的特写
+- `?t=秒`：从歌曲的这个时间开始（先按固定步长快进）
 - `?pause=1`：快进后停住
 - `?mode=ar`：传给 `setup()` 的 `mode`
+- `?nomusic=1`：不放背景音乐，演出用 scene.js 自己的时钟
 - `?tree=路径`：换一棵树
 
 `?test=1` 会让动画按固定步长快进 90 秒，每 3 秒检查一次：
@@ -53,10 +71,15 @@ node test/shots.mjs         # 无头 Chromium 跑自检，截图到 screenshots/
 - 小人有没有走出底座，彼此有没有撞上。
 - 有没有花瓣飘在附近树冠顶面的上方。
 - 每片停住的花瓣（平躺且不动），正中间往下 0.1 格内必须碰到树或底座。
+- 演出时间线：鲸鱼只在 17–63 秒出现；21.5–28.5 秒三人都停住在看；19.4 秒前和 30–63 秒在跑；64 秒后在跳。鲸鱼的每个顶点（蒙皮之后）也要不在树里、不超出底座 3 格。
 - 绘制调用、三角形数和 `update()` 的耗时。
 - `dispose()` 之后 stage 里是不是只剩下树。
 
 控制台出现报错或警告、或者访问了本地服务以外的网址，也算失败。`node test/field-debug.mjs` 会用文字打印碰撞柱和环路的长度。
+
+## 背景音乐
+
+演示页循环播放 `audio/bgm.mp3`，右上角的按钮显示正在播放「muque - いいんじゃない」，点击暂停或继续。浏览器不允许没有交互就自动出声，所以自动播放被拒绝时，按钮停在暂停状态，等观众点一下。在歌曲开始之前，演出按 scene.js 自己的时钟走；开始之后跟着歌曲的播放位置走；暂停时故事停在当前位置。音乐文件加载失败时，按钮会隐藏。
 
 ## 部署
 
