@@ -1,8 +1,8 @@
 // Builds the three walking figures for scene.js as glTF binaries: node tools/make-walkers.mjs
 //
 // Each figure is a voxel model (8 voxels per tree cube) skinned rigidly to five joints — hips, two arms, two legs —
-// with one looping "walk" clip: legs and arms swing, the hips bob, and the hips are lifted just enough each frame
-// that no foot ever dips below the ground. One mesh, one material (vertex colours) per figure; faces of the same
+// with one looping "run" clip: the body leans and twists, legs and arms swing wide, the hips bounce, and each
+// frame the figure is lifted just enough that nothing ever dips below the ground. One mesh, one material (vertex colours) per figure; faces of the same
 // colour are merged into larger rectangles (greedy meshing) to keep the triangle count low.
 //
 // The look follows the three reference sprites: a blue hooded healer with a white-framed crest and hood tails,
@@ -17,10 +17,14 @@ import { fileURLToPath } from 'node:url';
 
 const OUT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets');
 const V = 0.125;              // voxel edge in tree cubes
-const CYCLE = 0.8;            // seconds per walk cycle (two steps)
-const LEG_SWING = 28 * Math.PI / 180;
-const ARM_SWING = 32 * Math.PI / 180;
-const BOB = 1;                // extra hip lift at the passing pose, in voxels
+const CYCLE = 0.56;           // seconds per run cycle (two strides)
+const LEG_SWING = 40 * Math.PI / 180;
+const ARM_SWING = 55 * Math.PI / 180;
+const ARM_FORWARD = 10 * Math.PI / 180;   // arms carried a little in front
+const LEAN = 11 * Math.PI / 180;          // forward lean of the body
+const TWIST = 8 * Math.PI / 180;          // body turning with the arms
+const BOUNCE = 2.2;           // hip rise in the flight phase, in voxels
+const STRIDE_GAIN = 1.0;      // stride per cycle, relative to how far the legs reach
 const KEYS = 24;
 
 // joints: 0 hips (body, head, hat, cape), 1 arm +x, 2 arm -x, 3 leg +x, 4 leg -x
@@ -251,47 +255,70 @@ function mesh(parts) {
 
 const quatX = a => [Math.sin(a / 2), 0, 0, Math.cos(a / 2)];
 
-// Lowest point of a leg's voxels (relative to its pivot) when it is swung by angle a.
-function legLow(vox, pivot, a) {
-  let low = Infinity;
-  const ca = Math.cos(a), sa = Math.sin(a);
-  for (const k of vox.keys()) {
-    const [, y, z] = k.split(',').map(Number);
-    for (const dy of [0, 1]) for (const dz of [0, 1]) {
-      const ry = y + dy - pivot[1], rz = z + dz - pivot[2];
-      low = Math.min(low, ry * ca - rz * sa);
-    }
-  }
-  return low;
-}
+// quaternion helpers: [x, y, z, w]
+const qAxis = (ax, a) => [ax[0] * Math.sin(a / 2), ax[1] * Math.sin(a / 2), ax[2] * Math.sin(a / 2), Math.cos(a / 2)];
+const qMul = (a, b) => [
+  a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+  a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+  a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+  a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]
+];
+const qRot = (q, v) => {
+  const [x, y, z, w] = q;
+  const tx = 2 * (y * v[2] - z * v[1]), ty = 2 * (z * v[0] - x * v[2]), tz = 2 * (x * v[1] - y * v[0]);
+  return [v[0] + w * tx + y * tz - z * ty, v[1] + w * ty + z * tx - x * tz, v[2] + w * tz + x * ty - y * tx];
+};
 
-function animation(parts) {
-  const times = [], hips = [], rot = [[], [], [], []];
+// A run cycle: the body leans forward and twists with the arms, legs and arms swing wide (arms held a little
+// forward), and the body is highest when the legs are spread (the moment both feet are off the ground) and
+// lowest as a leg passes under it. Each key, the whole figure is posed and the hips lifted so that its lowest
+// vertex sits exactly on y = 0 at the lowest point of the bounce, so nothing ever sinks into the ground.
+function animation(m) {
+  const X = [1, 0, 0], Y = [0, 1, 0];
+  const keys = [];
   for (let i = 0; i <= KEYS; i++) {
-    const t = CYCLE * i / KEYS, s = Math.sin(2 * Math.PI * i / KEYS);
+    const ph = 2 * Math.PI * i / KEYS, s = Math.sin(ph);
     const legA = LEG_SWING * s, armA = ARM_SWING * s;
-    const angles = [-armA, armA, legA, -legA];          // each arm swings against the leg on its side
-    // lift the hips so the lower foot just touches y = 0, plus a little bob at the passing pose
-    const lowP = PIVOTS[LEG_P][1] + legLow(parts[LEG_P], PIVOTS[LEG_P], angles[2]);
-    const lowN = PIVOTS[LEG_N][1] + legLow(parts[LEG_N], PIVOTS[LEG_N], angles[3]);
-    const lift = -Math.min(lowP, lowN) + BOB * (1 + Math.cos(4 * Math.PI * i / KEYS)) / 2 + 0.04;
-    times.push(t);
-    hips.push(0, (PIVOTS[HIPS][1] + lift) * V, 0);
-    angles.forEach((a, j) => rot[j].push(...quatX(a)));
+    const limb = [-armA - ARM_FORWARD, armA - ARM_FORWARD, legA, -legA].map(a => qAxis(X, a));
+    const hipQ = qMul(qAxis(Y, -TWIST * s), qAxis(X, LEAN));
+    const bounce = BOUNCE * (1 - Math.cos(2 * ph)) / 2;
+    // lowest vertex with the hips at their pivot height
+    let low = Infinity;
+    const posed = [];
+    for (let k = 0; k < m.pos.length; k += 3) {
+      const j = m.jnt[(k / 3) * 4];
+      let v = [m.pos[k] / V, m.pos[k + 1] / V, m.pos[k + 2] / V];
+      if (j) {
+        const p = PIVOTS[j];
+        v = qRot(limb[j - 1], [v[0] - p[0], v[1] - p[1], v[2] - p[2]]);
+        v = [v[0] + p[0] - PIVOTS[HIPS][0], v[1] + p[1] - PIVOTS[HIPS][1], v[2] + p[2] - PIVOTS[HIPS][2]];
+      } else v = [v[0] - PIVOTS[HIPS][0], v[1] - PIVOTS[HIPS][1], v[2] - PIVOTS[HIPS][2]];
+      const w = qRot(hipQ, v);
+      w[1] += PIVOTS[HIPS][1];
+      posed.push(w);
+      low = Math.min(low, w[1]);
+    }
+    keys.push({ limb, hipQ, bounce, low, posed });
   }
-  const stride = 4 * (PIVOTS[LEG_P][1]) * V * Math.sin(LEG_SWING);
-  return { times, hips, rot, stride };
+  // lift each key so its lowest point is on the ground, then add the bounce on top
+  const times = [], hips = [], hipRot = [], rot = [[], [], [], []];
+  let height = 0, radius = 0;
+  keys.forEach((k, i) => {
+    const lift = -k.low + k.bounce + 0.04;
+    for (const w of k.posed) { height = Math.max(height, (w[1] + lift) * V); radius = Math.max(radius, Math.hypot(w[0], w[2]) * V); }
+    times.push(CYCLE * i / KEYS);
+    hips.push(0, (PIVOTS[HIPS][1] + lift) * V, 0);
+    hipRot.push(...k.hipQ);
+    k.limb.forEach((q, j) => rot[j].push(...q));
+  });
+  const stride = STRIDE_GAIN * 4 * PIVOTS[LEG_P][1] * V * Math.sin(LEG_SWING);
+  return { times, hips, hipRot, rot, stride, height, radius };
 }
 
 function glb({ name, f }) {
   const m = mesh(f.parts);
-  const anim = animation(f.parts);
-  let maxY = 0, maxR = 0;
-  for (let i = 0; i < m.pos.length; i += 3) {
-    maxY = Math.max(maxY, m.pos[i + 1]);
-    maxR = Math.max(maxR, Math.hypot(m.pos[i], m.pos[i + 2]));
-  }
-  maxY += Math.max(...anim.hips.filter((_, i) => i % 3 === 1)) - PIVOTS[HIPS][1] * V;
+  const anim = animation(m);
+  const maxY = anim.height, maxR = anim.radius;
 
   const chunks = [], views = [], accessors = [];
   let offset = 0;
@@ -332,6 +359,7 @@ function glb({ name, f }) {
 
   const aTime = acc(new Float32Array(anim.times), 'SCALAR', F, anim.times.length, { min: [0], max: [CYCLE] });
   const aHips = acc(new Float32Array(anim.hips), 'VEC3', F, anim.times.length);
+  const aHipRot = acc(new Float32Array(anim.hipRot), 'VEC4', F, anim.times.length);
   const aRot = anim.rot.map(r => acc(new Float32Array(r), 'VEC4', F, anim.times.length));
 
   // nodes: 0 root, 1 mesh, 2 hips, 3.. limbs
@@ -350,9 +378,10 @@ function glb({ name, f }) {
     materials: [{ name, pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1], metallicFactor: 0, roughnessFactor: 0.9 } }],
     skins: [{ joints: [2, 3, 4, 5, 6], inverseBindMatrices: aIbm, skeleton: 2 }],
     animations: [{
-      name: 'walk',
-      samplers: [{ input: aTime, output: aHips, interpolation: 'LINEAR' }, ...aRot.map(o => ({ input: aTime, output: o, interpolation: 'LINEAR' }))],
-      channels: [{ sampler: 0, target: { node: 2, path: 'translation' } }, ...aRot.map((_, j) => ({ sampler: j + 1, target: { node: 3 + j, path: 'rotation' } }))]
+      name: 'run',
+      samplers: [aHips, aHipRot, ...aRot].map(o => ({ input: aTime, output: o, interpolation: 'LINEAR' })),
+      channels: [{ sampler: 0, target: { node: 2, path: 'translation' } }, { sampler: 1, target: { node: 2, path: 'rotation' } },
+        ...aRot.map((_, j) => ({ sampler: j + 2, target: { node: 3 + j, path: 'rotation' } }))]
     }],
     accessors, bufferViews: views, buffers: [{ byteLength: offset }]
   };

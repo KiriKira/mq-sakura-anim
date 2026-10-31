@@ -26,7 +26,12 @@ for (let r = 0; r < info.grid.rows; r++) {
 console.log(rows.join('\n'));
 const sp = _internals.spawnPoints(f, info, pt);
 console.log('spawn top', sp.top.length / 3, 'under', sp.under.length / 3);
-for (const R of [1.95]) {
-  const p = _internals.buildPath(THREE, f, info, pt, R, 5.4);
-  console.log('R', R, p ? 'length ' + p.length.toFixed(1) : 'no path');
+for (const R of [2.14, 1.95]) {
+  const p = _internals.buildPath(THREE, f, info, pt, R, 4.99);
+  if (!p) { console.log('R', R, 'no path'); continue; }
+  const cx = info.trunk.centre[0] / info.cell, cz = info.trunk.centre[1] / info.cell, v = new THREE.Vector3(), d = [];
+  for (let k = 0; k < 360; k++) { p.curve.getPointAt(k / 360, v); d.push(Math.hypot(v.x - cx, v.z - cz)); }
+  const sorted = d.slice().sort((a, b) => a - b);
+  console.log('R', R, 'length', p.length.toFixed(1), 'distance from trunk: min', sorted[0].toFixed(2), 'median', sorted[180].toFixed(2), 'max', sorted[359].toFixed(2),
+    'within 0.1 of median:', d.filter(x => Math.abs(x - sorted[180]) < 0.1).length + '/360');
 }

@@ -25,7 +25,7 @@ const PETAL_COLOURS = ['#FFB8CB', '#F27A9C'];
 const SAMPLES = 4;             // collision columns per cube, each way
 const SEED = 0x5A6B2026;
 const MAX_DT = 0.1;
-const RADIUS_SHARE = 0.5;     // the walkers' loop: this share of the way from the trunk to the plate's edge
+const RADIUS_SHARE = 0.5;     // the runners' circle: this share of the way from the trunk to the nearest plate edge
 
 export default async function setup({ THREE = THREE_NS, stage, tree, info, mode = '3d' }) {
   const cell = info.cell;
@@ -60,7 +60,7 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
   const walkR = Math.max(...walkers.map(w => w.radius)) + 0.35;
   const walkH = Math.max(...walkers.map(w => w.height)) + 0.25;
   const path = buildPath(THREE, field, info, plateTop, walkR, walkH);
-  const V0 = 2.6;                       // the leader's average running speed, cubes per second
+  const V0 = 2.8;                       // the leader's average running speed, cubes per second
   const MIN_GAP = 2.6;                  // closest two walkers get, along the loop (they are ~2 cubes deep)
   const CHASE_GAP = MIN_GAP + 1.4;      // usual distance between a chaser and the one in front
   if (path) {
@@ -223,8 +223,16 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
       const u = w.s / L;
       path.curve.getPointAt(u, pos);
       path.curve.getTangentAt(u, tan);
-      w.obj.position.set(pos.x, plateTop, pos.z);
-      w.obj.rotation.y = Math.atan2(tan.x, tan.z);
+      // lean into the turn (turn rate x speed), eased; lifted by the lean so the outer foot stays above ground
+      const yaw = Math.atan2(tan.x, tan.z);
+      let turn = yaw - (w.yaw ?? yaw);
+      turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+      const rate = dt > 0 ? turn / dt : 0;
+      const bank = Math.max(-0.25, Math.min(0.25, -rate * w.v * 0.12));
+      w.bank = (w.bank ?? 0) + (bank - (w.bank ?? 0)) * Math.min(1, dt * 4);
+      w.yaw = yaw;
+      w.obj.rotation.set(0, yaw, w.bank, 'YXZ');
+      w.obj.position.set(pos.x, plateTop + 0.75 * Math.abs(Math.sin(w.bank)), pos.z);
       w.px = pos.x; w.pz = pos.z;
       w.mixer.timeScale = w.v / w.natural;
       w.mixer.update(dt);
@@ -393,8 +401,8 @@ function spawnPoints(field, info, plateTop) {
   return { top, under };
 }
 
-// A closed loop round the trunk, about half way out to the plate's edge, kept off anything solid (it bends round
-// low branches and roots).
+// A circle round the trunk, about half way out to the plate's edge, kept off anything solid (where a low branch or
+// root is in the way it bends round it).
 function buildPath(THREE, field, info, plateTop, R, H) {
   const cell = info.cell;
   const cx = info.trunk.centre[0] / cell, cz = info.trunk.centre[1] / cell;
@@ -410,17 +418,18 @@ function buildPath(THREE, field, info, plateTop, R, H) {
     }
     return true;
   };
-  const K = 120, P = 4;
+  // a circle round the trunk; its radius is RADIUS_SHARE of the distance from the trunk to the nearest plate edge
+  const K = 120;
+  const reach = Math.min(xMax - cx, cx - xMin, zMax - cz, cz - zMin);
+  const want = Math.max(2, (reach - 0.3) * RADIUS_SHARE);
   const dirs = [], rad = [];
   for (let k = 0; k < K; k++) {
-    const a = 2 * Math.PI * k / K, ca = Math.cos(a), sa = Math.sin(a);
-    const ux = Math.sign(ca) * Math.pow(Math.abs(ca), 2 / P), uz = Math.sign(sa) * Math.pow(Math.abs(sa), 2 / P);
+    const a = 2 * Math.PI * k / K, ux = Math.cos(a), uz = Math.sin(a);
     dirs.push([ux, uz]);
     let rMax = Infinity;
     if (ux > 1e-6) rMax = Math.min(rMax, (xMax - cx) / ux); else if (ux < -1e-6) rMax = Math.min(rMax, (xMin - cx) / ux);
     if (uz > 1e-6) rMax = Math.min(rMax, (zMax - cz) / uz); else if (uz < -1e-6) rMax = Math.min(rMax, (zMin - cz) / uz);
-    // about half way out from the trunk to the plate's edge; the nearest clear radius to that
-    const want = Math.max(2, (rMax - 0.3) * RADIUS_SHARE);
+    // where a low branch or root is in the way, the nearest clear radius in this direction
     let found = NaN;
     for (let d = 0; d <= rMax; d += 0.25) {
       if (want - d >= 2 && clear(cx + ux * (want - d), cz + uz * (want - d))) { found = want - d; break; }

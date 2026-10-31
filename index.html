@@ -140,6 +140,7 @@ renderer.setAnimationLoop(now => {
     const r = renderer.info.render;
     report.drawCalls = r.calls; report.triangles = r.triangles;
     const sorted = times.slice().sort((a, b) => a - b);
+    report.slowest = times.map((t, i) => [t, i]).sort((a, b) => b[0] - a[0]).slice(0, 5);
     report.updateMs = { calls: times.length, median: sorted[sorted.length >> 1], p95: sorted[Math.floor(sorted.length * 0.95)], max: sorted[sorted.length - 1] };
     window.__report = report;
     window.__ready = true;
@@ -175,6 +176,7 @@ async function check() {
   const note = (list, what) => { if (list.length < 20) list.push(what); };
   const walkers = [];
   root.traverse(o => { if (o.isSkinnedMesh) walkers.push(o); });
+  out.walkersShown = walkers.length === 3 && walkers.every(w => w.parent.visible);
 
   for (let step = 0; step <= 90 * 30; step++) {
     if (step) { timedUpdate(1 / 30, elapsed); elapsed += 1 / 30; }

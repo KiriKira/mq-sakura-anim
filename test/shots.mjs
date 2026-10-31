@@ -38,6 +38,7 @@ try {
   const { page, problems, report } = await open("test=1&pause=1");
   console.log(JSON.stringify(report, (k, v) => Array.isArray(v) && v.every(n => typeof n === "number") ? JSON.stringify(v) : v, 1));
   if (problems.length) fail(problems.join('\n'));
+  if (!report.walkersShown) fail('the walkers are not all shown (no path?)');
   if (report.insideTree.length) fail('something inside the tree');
   if (report.stageAfterDispose.join() !== 'SakuraQR') fail('dispose() left ' + report.stageAfterDispose.join());
   if (report.outOfBounds.length) fail('something out of bounds');
