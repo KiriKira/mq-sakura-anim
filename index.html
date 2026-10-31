@@ -155,7 +155,7 @@ renderer.setAnimationLoop(now => {
 //  * is everything within the plate plus 3 cubes and above y = 0, do the walkers stay on the plate?
 //  * do two walkers ever come closer than their radii allow?
 async function check() {
-  const out = { samples: 0, points: 0, insideTree: [], outOfBounds: [], offPlate: [], walkerOverlap: 0, petalsLanded: { plate: 0, canopy: 0 } };
+  const out = { samples: 0, points: 0, insideTree: [], outOfBounds: [], offPlate: [], walkerOverlap: 0, petalsAboveCanopy: 0, aboveCanopy: [], petalsLanded: { plate: 0, canopy: 0 } };
   const solid = [];
   tree.updateMatrixWorld(true);
   tree.traverse(o => {
@@ -213,6 +213,12 @@ async function check() {
         if (inside(v)) note(out.insideTree, ['petal ' + i, step / 30, v.toArray().map(n => +(n / cell).toFixed(2))]);
       }
       const e = m4.elements;
+      if (Math.abs(e[5]) < 0.99 * Math.hypot(e[4], e[5], e[6])) {        // tumbling → in the air: not above the canopy top near it
+        const g = info.grid, col = Math.floor((e[12] - g.origin[0]) / cell), row = Math.floor((e[14] - g.origin[1]) / cell);
+        let top = 0;
+        for (let r = row - 2; r <= row + 2; r++) for (let c = col - 2; c <= col + 2; c++) if (g.surface[r] && g.surface[r][c] > top) top = g.surface[r][c];
+        if (top > 1 && e[13] / cell > top) { out.petalsAboveCanopy++; note(out.aboveCanopy, ['petal ' + i, step / 30, [e[12] / cell, e[13] / cell, e[14] / cell].map(n => +n.toFixed(2)), top]); }
+      }
       if (Math.abs(e[5]) > 0.99 * Math.hypot(e[4], e[5], e[6])) {        // lying flat → resting
         const y = e[13] / cell;
         if (y < info.plate.top / cell + 0.1) out.petalsLanded.plate++; else out.petalsLanded.canopy++;

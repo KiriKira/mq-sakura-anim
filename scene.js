@@ -97,12 +97,12 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
   let clock = 0;
 
   function respawn(p) {
-    const top = spawns.top.length && (rand() < 0.45 || !spawns.under.length);
-    const list = top ? spawns.top : spawns.under;
+    const fromSide = spawns.side.length && (rand() < 0.5 || !spawns.under.length);
+    const list = fromSide ? spawns.side : spawns.under;
     if (!list.length) { p.state = HIDDEN; p.timer = 5; return; }
     const k = Math.floor(rand() * list.length / 3) * 3;
     p.x = list[k]; p.y = list[k + 1]; p.z = list[k + 2];
-    p.vy = top ? 0.5 + rand() * 0.5 : 0;
+    p.vy = 0;
     p.ix = p.iz = 0;
     p.yaw = rand() * 6.28; p.angle = rand() * 6.28;
     p.state = GROW; p.timer = 0;
@@ -379,26 +379,34 @@ function buildField(THREE, tree, info) {
   };
 }
 
-// Places just outside the canopy where a petal can appear: on top of it and under its overhang.
+// Places just outside the canopy where a petal can appear: under its overhang, and beside its outer walls below
+// their top edge. Never above the canopy, so no petal is ever seen floating over the tree.
 function spawnPoints(field, info, plateTop) {
-  const top = [], under = [], r = PETAL_RV, rh = PETAL_RH, S = SAMPLES;
+  const side = [], under = [], r = PETAL_RV, rh = PETAL_RH, S = SAMPLES;
+  const NB = [[3, 0], [-3, 0], [0, 3], [0, -3]];            // neighbours 0.75 cube away
   for (let j = 1; j < field.nz; j += 2) for (let i = 1; i < field.nx; i += 2) {
     const runs = field.runs[j * field.nx + i];
-    if (runs.length < 2) continue;
     const x = field.x0 + (i + 0.5) / S, z = field.z0 + (j + 0.5) / S;
-    const last = runs[runs.length - 1];
-    if (last > plateTop + 4) {
-      const y = last + r + 0.05;
-      if (!field.footBlocked(x, z, y - r, y + r, rh)) top.push(x, y, z);
-    }
-    for (let k = 2; k < runs.length; k += 2) {
+    for (let k = 2; k < runs.length; k += 2) {               // undersides
       const b = runs[k], below = runs[k - 1];
       if (b - below < 2 * r + 0.5 || b < plateTop + 3) continue;
       const y = b - r - 0.05;
       if (!field.footBlocked(x, z, y - r, y + r, rh)) under.push(x, y, z);
     }
+    for (const [di, dj] of NB) {                             // beside a canopy wall, at least a cube below its top
+      const ni = i + di, nj = j + dj;
+      if (ni < 0 || nj < 0 || ni >= field.nx || nj >= field.nz) continue;
+      const wall = field.runs[nj * field.nx + ni];
+      for (let k = 0; k < wall.length; k += 2) {
+        const b = wall[k], t = wall[k + 1];
+        if (t < plateTop + 4) continue;                      // trunk base and roots: not canopy
+        for (let y = Math.max(b, plateTop + 3) + r; y <= t - 1 - r; y += 1) {
+          if (!field.footBlocked(x, z, y - r, y + r, rh)) side.push(x, y, z);
+        }
+      }
+    }
   }
-  return { top, under };
+  return { side, under };
 }
 
 // A circle round the trunk, about half way out to the plate's edge, kept off anything solid (where a low branch or

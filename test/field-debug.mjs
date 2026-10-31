@@ -25,7 +25,7 @@ for (let r = 0; r < info.grid.rows; r++) {
 }
 console.log(rows.join('\n'));
 const sp = _internals.spawnPoints(f, info, pt);
-console.log('spawn top', sp.top.length / 3, 'under', sp.under.length / 3);
+console.log('spawn side', sp.side.length / 3, 'under', sp.under.length / 3);
 for (const R of [2.14, 1.95]) {
   const p = _internals.buildPath(THREE, f, info, pt, R, 4.99);
   if (!p) { console.log('R', R, 'no path'); continue; }
