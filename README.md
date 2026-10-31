@@ -58,6 +58,10 @@ node test/shots.mjs         # 无头 Chromium 跑自检，截图到 screenshots/
 
 控制台出现报错或警告、或者访问了本地服务以外的网址，也算失败。`node test/field-debug.mjs` 会用文字打印碰撞柱和环路的长度。
 
+## AR 训练
+
+让手机摄像头认出打印出来的树：见 [`ar/train/README.md`](ar/train/README.md)。
+
 ## 部署
 
 `.github/workflows/pages.yml` 在推送到 `main` 时构建并发布 GitHub Pages：执行 `npm ci`，把 import map 用到的几个 three.js 文件按原路径复制进站点，然后部署。第一次需要在仓库的 Settings → Pages 里把 Source 设成 “GitHub Actions”。
