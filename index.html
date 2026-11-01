@@ -75,10 +75,13 @@ controls.enableDamping = true;
 
 scene.add(new THREE.HemisphereLight('#fff6f2', '#b9a8a4', 1.6));
 const sun = new THREE.DirectionalLight('#ffffff', 2.2);
-sun.position.set(0.05, 0.11, 0.07);
+// far out along the same direction, so the whale still casts a shadow while it climbs high
+sun.position.set(0.05, 0.11, 0.07).multiplyScalar(3);
 sun.castShadow = true;
+// the shadow covers the whale's circle (radius ~4.7 cm) and where its shadow falls, not just the tree;
+// 2048 texels over 22 cm is ~0.1 mm, under a tenth of a tree cube (4096 would cost phones ~64 MB)
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -0.05, right: 0.05, top: 0.05, bottom: -0.05, near: 0.01, far: 0.3 });
+Object.assign(sun.shadow.camera, { left: -0.11, right: 0.11, top: 0.11, bottom: -0.11, near: 0.05, far: 0.9 });
 sun.shadow.bias = -0.0002;
 sun.shadow.normalBias = 0.0002;
 scene.add(sun);
