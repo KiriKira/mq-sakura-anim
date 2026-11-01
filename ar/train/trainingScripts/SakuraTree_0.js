@@ -13,10 +13,12 @@ const settings = {
 
 
 // THE TREE
-// tree.glb is in metres: the plate's bottom at y = 0, centred on the origin, +Y up, 46.7 x 46.7 x 33 mm.
-// isCenter moves its bounding box's centre, (0, 16.5 mm, 0), to the origin, so the tracked pose is that point:
+// tree.glb is in metres: the plate's bottom at y = 0, centred on the origin, +Y up, 41 x 41 x 27 mm as printed (the
+// 1.5 mm design squeezed: across x 0.8775, height x 0.8177; see printScale in its extras).
+// isCenter moves its bounding box's centre, (0, 13.5 mm, 0), to the origin, so the tracked pose is that point:
 // in the AR page, move the tree (and the animation's stage) down by half its height to sit on the detected plate.
-// scale makes the tree about as large as the lighter of the example script (bounding sphere about 1.6 units), for
+// scale makes the tree about as large as the lighter of the example script (bounding sphere about 1.6 units: the tree's
+// is 64 mm across, x 25), for
 // which distance, FOV and lighting are tuned. Samples with part of the plate cut off are intended: the detection
 // window is shifted and scaled at random (dxMax, dyMax, dsMax) and the network learns to correct it.
 
@@ -28,14 +30,15 @@ const objects = [
       {
         meshes: ['trainingData/models3D/sakura/tree.glb'],
         envMapMats: 'ALL', // random environment reflections on every material
-        // PLA from matte to silk, under any white balance: jitter colour and sheen around the printed colours
+        // printed colours under any white balance, matte to glossy (full-colour resin; PLA, matte to silk, too): jitter
+        // colour and sheen around the printed colours
         // (from each material's own colour, kept in userData, so the jitter does not add up over samples)
         materialsTweakers: {
           'blossom': (mat) => tweak_filament(mat, 0.04),
           'highlight': (mat) => tweak_filament(mat, 0.03),
           'wood': (mat) => tweak_filament(mat, 0.05)
         },
-        scale: 22,
+        scale: 25,
         thetaOffset: 0,
         thetaRange: [-180, 180], // any side of the tree
         probability: 1,

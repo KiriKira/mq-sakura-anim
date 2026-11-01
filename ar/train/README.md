@@ -3,7 +3,7 @@
 用 [WebAR.rocks.train](https://github.com/WebAR-rocks/WebAR.rocks.train) 从 `tree.glb` 训练一个神经网络，之后 [WebAR.rocks.object](https://github.com/WebAR-rocks/WebAR.rocks.object) 用它在手机摄像头画面里每一帧找出这棵树的位置和朝向。训练程序跑在浏览器里，用显卡算，要连续跑几天。
 
 - `trainingScripts/SakuraTree_0.js`：训练脚本，从官方打火机示例 `Object3DLighter_0.js` 改的，网络结构不变。
-- `trainingData/models3D/sakura/tree.glb`：训练用的树，必须和打印出来的那棵一模一样（同样的网址和设置）。现在是 `HTTPS://MQ.OPENKIRI.ZIP` 那棵，和仓库根目录的 `tree.glb` 相同。
+- `trainingData/models3D/sakura/tree.glb`：训练用的树，必须和打印出来的那棵一模一样（同样的网址和设置）。现在是 `HTTPS://MQ.OPENKIRI.ZIP` 那棵，按打印件缩放到 41 × 41 × 27 mm（水平 × 0.8775，高度 × 0.8177，和 `sakuraqr-mq-openkiri-41x41-facecolor.3mf` 一样）。仓库根目录的 `tree.glb` 是演示动画用的，还是缩放前的 1.5 mm 版本。换打印件时，这里的树也要跟着换。
 
 ## 准备（Windows + Edge）
 
