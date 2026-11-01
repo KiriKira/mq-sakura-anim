@@ -5,9 +5,10 @@
 
 const settings = {
   debug: false, // true: one sample per step and every sample positive, to check the rendered images before training
-  // your own photos of the places you will use the AR in (desk, shelf, table), without the tree in them,
-  // converted to trainingData/images/sakuraBg/bg_<i>.png (power-of-two sizes). 0 if you have none yet.
-  photosCount: 0
+  // backgrounds like the places the tree will stand in: photos of your desks, CC0 wood, fabric and wall textures and
+  // crops of indoor panoramas from Poly Haven, as trainingData/images/sakuraBg/bg_<i>.jpg, 1024 x 1024 (see
+  // SOURCES.txt there). 0 to train on the random images only.
+  photosCount: 55
 };
 //settings.debug = true;
 
@@ -133,6 +134,7 @@ if (settings.photosCount){
   backgroundSets.push({
     imagePath: 'trainingData/images/sakuraBg/',
     imagePrefix: 'bg_',
+    extension: 'jpg',
     count: settings.photosCount,
     scaleRange: [0.3, 1], // photos: from the whole photo to a close-up of part of it
     scalePow: 1,
