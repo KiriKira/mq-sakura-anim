@@ -83,9 +83,10 @@ try {
       r.resumedByButton = !a.paused && document.getElementById('music').classList.contains('playing');
       return r;
     });
+    m.hintGone = await page.evaluate(() => document.getElementById('hint').hidden);   // autoplay worked: no arrow
     console.log('music', JSON.stringify(m));
     if (problems.length) fail('music: ' + problems.join('\n'));
-    if (!(m.duration > 90 && m.playing && m.advanced > 0.5 && m.whaleAfterSeek && m.pausedByButton && m.resumedByButton)) fail('music does not drive the show as it should');
+    if (!(m.duration > 90 && m.playing && m.advanced > 0.5 && m.whaleAfterSeek && m.pausedByButton && m.resumedByButton && m.hintGone)) fail('music does not drive the show as it should');
     await page.screenshot({ path: path.join(OUT, 'music-button.png') });
     await page.close();
   }
@@ -100,10 +101,18 @@ try {
     await page.waitForFunction(() => window.__ready === true, null, { timeout: 120000 });
     const b = await page.evaluate(() => { const e = document.getElementById('music'), r = e.getBoundingClientRect();
       return { hidden: e.hidden, display: getComputedStyle(e).display, playing: e.classList.contains('playing'), inView: r.top >= 0 && r.right <= innerWidth && r.width > 0 }; });
+    // the arrow is there until the button is tapped, then gone for good, even after pausing again
+    const hintBefore = await page.evaluate(() => { const h = document.getElementById('hint'); return !h.hidden && getComputedStyle(h).visibility !== 'hidden'; });
+    await page.waitForTimeout(2200);                   // let it draw itself in
+    await page.screenshot({ path: path.join(OUT, 'phone-hint.png') });
+    await page.click('#music'); await page.waitForTimeout(500);
+    await page.evaluate(() => window.__bgm.pause()); await page.waitForTimeout(500);
+    const hintAfter = await page.evaluate(() => !document.getElementById('hint').hidden);
+    console.log('hint', JSON.stringify({ before: hintBefore, afterTapAndPause: hintAfter }));
+    if (!hintBefore || hintAfter) fail('the arrow should show until the first tap and never after');
     console.log('phone button', JSON.stringify(b));
     if (b.hidden || b.display === 'none' || b.playing || !b.inView) fail('no music button while the audio has not loaded');
     if (problems.length) fail('phone: ' + problems.join('\n'));
-    await page.screenshot({ path: path.join(OUT, 'phone.png') });
     await page.close();
   }
   // the music file can't be had at all: the button stays, greyed out and disabled

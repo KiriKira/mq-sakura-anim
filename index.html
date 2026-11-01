@@ -25,7 +25,24 @@
   #music:not(.playing) .bar { display: none; }
   #music:not(.playing) .icon::before { content: ''; position: absolute; left: 3px; top: 1px; border-style: solid;
     border-width: 6px 0 6px 10px; border-color: transparent transparent transparent #e0567f; }
-  @media (prefers-reduced-motion: reduce) { #music.playing .bar { animation: none; height: 9px; } }
+  /* first-visit hint: a hand-drawn arrow looping up to the music button, until the first tap */
+  #hint { position: fixed; top: 46px; right: 64px; width: min(210px, 46vw); pointer-events: none; color: #e0567f;
+    transition: opacity .35s; filter: drop-shadow(0 1px 0 #fff) drop-shadow(0 0 3px #fff); }
+  #hint[hidden] { display: block; opacity: 0; visibility: hidden; transition: opacity .35s, visibility 0s .35s; }
+  #hint svg { display: block; width: 100%; height: auto; overflow: visible; animation: bob 2.4s ease-in-out 1.4s infinite; }
+  #hint .stroke { fill: none; stroke: currentColor; stroke-width: 4.5; stroke-linecap: round; stroke-linejoin: round;
+    stroke-dasharray: 420; stroke-dashoffset: 420; animation: draw 1.2s ease-out .4s forwards; }
+  #hint .head { stroke-dasharray: 60; stroke-dashoffset: 60; animation: draw .35s ease-out 1.5s forwards; }
+  #hint .label { position: absolute; left: -2px; top: calc(100% + 4px); transform: rotate(-4deg); transform-origin: left top;
+    font: 600 14px/1.2 system-ui, sans-serif; white-space: nowrap; color: #c8406a; opacity: 0; animation: fade .5s ease-out 1.4s forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @keyframes fade { to { opacity: 1; } }
+  @keyframes bob { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(5px, -5px); } }
+  @media (prefers-reduced-motion: reduce) {
+    #music.playing .bar { animation: none; height: 9px; }
+    #hint svg, #hint .label { animation: none; opacity: 1; }
+    #hint .stroke { animation: none; stroke-dashoffset: 0; }
+  }
 </style>
 <!-- three 0.170.0 from node_modules (npm install), no CDN -->
 <script type="importmap">
@@ -37,6 +54,13 @@
 </head>
 <body>
 <div id="hud"></div>
+<div id="hint" hidden aria-hidden="true">
+  <svg viewBox="0 0 200 140">
+    <path class="stroke" d="M8 128 C 40 131, 72 114, 92 96 C 116 74, 126 46, 107 42 C 88 38, 70 68, 90 84 C 114 102, 152 62, 186 13"/>
+    <path class="stroke head" d="M165 14 L187 11 L186 34"/>
+  </svg>
+  <span class="label">点一下，听音乐 ♪</span>
+</div>
 <button id="music" type="button" hidden aria-label="背景音乐：muque - いいんじゃない（点击暂停或继续）" title="点击暂停 / 继续">
   <span class="icon"><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span></span>
   <span class="label">muque - いいんじゃない</span>
@@ -157,10 +181,16 @@ if (bgm) {
   // until the viewer taps, so it would never appear.) If the file can't be played at all it stays, greyed out.
   show();
   btn.hidden = false;
+  // the arrow pointing at the button, until it is first tapped (or the music starts by itself); never again after
+  const hint = document.getElementById('hint');
+  const dismissHint = () => { hint.hidden = true; };
+  hint.hidden = false;
+  btn.addEventListener('click', dismissHint, { once: true });
+  bgm.addEventListener('playing', dismissHint, { once: true });
   bgm.addEventListener('playing', () => { sounding = true; music.started = true; show(); });
   bgm.addEventListener('pause', () => { sounding = false; show(); });
   bgm.addEventListener('error', () => {
-    music.failed = true; sounding = false; show();
+    music.failed = true; sounding = false; show(); document.getElementById('hint').hidden = true;
     btn.disabled = true; btn.title = '音乐无法播放'; btn.setAttribute('aria-label', '背景音乐：muque - いいんじゃない（无法播放）');
   });
   btn.addEventListener('click', () => { if (bgm.paused) bgm.play().catch(() => show()); else bgm.pause(); });
