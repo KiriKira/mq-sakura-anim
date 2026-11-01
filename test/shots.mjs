@@ -106,6 +106,20 @@ try {
     await page.screenshot({ path: path.join(OUT, 'phone.png') });
     await page.close();
   }
+  // the music file can't be had at all: the button stays, greyed out and disabled
+  {
+    const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+    await page.route('**/audio/bgm.m4a', r => r.fulfill({ status: 404, body: '' }));
+    await page.goto(BASE + 'index.html');
+    await page.waitForFunction(() => window.__ready === true, null, { timeout: 120000 });
+    await page.waitForFunction(() => document.getElementById('music').disabled, null, { timeout: 20000 }).catch(() => {});
+    const b = await page.evaluate(() => { const e = document.getElementById('music');
+      return { hidden: e.hidden, disabled: e.disabled, display: getComputedStyle(e).display, filter: getComputedStyle(e).filter }; });
+    console.log('no music file', JSON.stringify(b));
+    if (b.hidden || b.display === 'none' || !b.disabled || !/grayscale/.test(b.filter)) fail('without the music file the button should stay, greyed out');
+    await page.screenshot({ path: path.join(OUT, 'music-unavailable.png'), clip: { x: 500, y: 0, width: 300, height: 70 } });
+    await page.close();
+  }
   // the camera director: cut in mid-shot (screenshot), and live: glides in when they stop, back out when they run
   {
     const { page, problems } = await open('t=24&pause=1');

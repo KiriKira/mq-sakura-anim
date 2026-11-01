@@ -13,7 +13,7 @@
     box-shadow: 0 2px 10px #b0707033; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   #music[hidden] { display: none; }
   #music:hover { background: #fff; }
-  #music:disabled { cursor: default; opacity: .6; }
+  #music:disabled { cursor: default; opacity: .55; filter: grayscale(1); box-shadow: none; }
   #music .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #music .icon { position: relative; width: 16px; height: 14px; flex: none; display: flex; align-items: flex-end; gap: 2px; }
   #music .bar { width: 3px; height: 4px; border-radius: 1px; background: #e0567f; }
@@ -94,8 +94,10 @@ const VIEWS = {
 };
 function placeCamera(view) {
   if (view === 'wide') {
-    controls.target.set(0, 0.03, 0);
-    camera.position.set(0.21, 0.13, 0.25);
+    // portrait screens: closer and aimed a little lower, so the tree isn't small at the bottom of a tall frame
+    const portrait = camera.aspect < 1, k = portrait ? 0.72 : 1;
+    controls.target.set(0, portrait ? 0.024 : 0.03, 0);
+    camera.position.set(0.21 * k, controls.target.y + (0.13 - 0.03) * k, 0.25 * k);
     camera.lookAt(controls.target); controls.update();
     return;
   }
@@ -110,10 +112,15 @@ function placeCamera(view) {
 }
 placeCamera(qs.get('view') || 'wide');
 
+let viewTouched = false;
+controls.addEventListener('start', () => { viewTouched = true; });
 addEventListener('resize', () => {
+  const wasPortrait = camera.aspect < 1;
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
+  // turned the phone round before moving the view: frame it again for the new shape
+  if (!viewTouched && wasPortrait !== camera.aspect < 1 && !qs.get('view') && (typeof director === 'undefined' || director.phase === 'idle')) placeCamera('wide');
 });
 
 const stage = new THREE.Group();
@@ -144,12 +151,15 @@ if (bgm) {
   let sounding = false;
   const show = () => { const on = sounding && !bgm.paused; btn.classList.toggle('playing', on); btn.title = on ? '点击暂停' : '点击播放'; };
   // The button shows straight away, paused. (Don't wait for the audio to load first: iOS Safari loads nothing
-  // until the viewer taps, so it would never appear.) It goes away only if the file can't be played at all.
+  // until the viewer taps, so it would never appear.) If the file can't be played at all it stays, greyed out.
   show();
   btn.hidden = false;
   bgm.addEventListener('playing', () => { sounding = true; music.started = true; show(); });
   bgm.addEventListener('pause', () => { sounding = false; show(); });
-  bgm.addEventListener('error', () => { btn.hidden = true; music.failed = true; });
+  bgm.addEventListener('error', () => {
+    music.failed = true; sounding = false; show();
+    btn.disabled = true; btn.title = '音乐无法播放'; btn.setAttribute('aria-label', '背景音乐：muque - いいんじゃない（无法播放）');
+  });
   btn.addEventListener('click', () => { if (bgm.paused) bgm.play().catch(() => show()); else bgm.pause(); });
   bgm.play().catch(() => show());        // autoplay refused: wait for a tap
 }
