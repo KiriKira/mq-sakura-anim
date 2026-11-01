@@ -133,22 +133,27 @@ let anim = await setup({ THREE, stage, tree, info, mode: qs.get('mode') || '3d',
 // Loops audio/bgm.m4a (muque「いいんじゃない」, 93.3 s) and drives the show from its position. Browsers only allow sound after the viewer has
 // interacted with the page, so if autoplay is refused the button waits in the paused state for a tap; until the song
 // has started once, the show runs on scene.js's own clock. Paused, the story holds where the song is.
-const music = { started: false, ok: false };
+const music = { started: false, failed: false };
 const bgm = qs.get('nomusic') || qs.get('test') ? null : new Audio('audio/bgm.m4a');
 const btn = document.getElementById('music');
 window.__bgm = bgm; window.__stage = stage;   // for test/shots.mjs
 if (bgm) {
   bgm.loop = true;
   bgm.preload = 'auto';
-  const show = () => { btn.classList.toggle('playing', !bgm.paused); btn.title = bgm.paused ? '点击继续播放' : '点击暂停'; };
-  bgm.addEventListener('play', () => { music.started = true; show(); });
-  bgm.addEventListener('pause', show);
-  bgm.addEventListener('canplay', () => { music.ok = true; btn.hidden = false; }, { once: true });
-  bgm.addEventListener('error', () => { btn.hidden = true; music.ok = false; });
-  btn.addEventListener('click', () => { if (bgm.paused) bgm.play().catch(() => {}); else bgm.pause(); });
+  // 'playing' only once sound is actually coming out (not merely asked for, while the file is still loading)
+  let sounding = false;
+  const show = () => { const on = sounding && !bgm.paused; btn.classList.toggle('playing', on); btn.title = on ? '点击暂停' : '点击播放'; };
+  // The button shows straight away, paused. (Don't wait for the audio to load first: iOS Safari loads nothing
+  // until the viewer taps, so it would never appear.) It goes away only if the file can't be played at all.
+  show();
+  btn.hidden = false;
+  bgm.addEventListener('playing', () => { sounding = true; music.started = true; show(); });
+  bgm.addEventListener('pause', () => { sounding = false; show(); });
+  bgm.addEventListener('error', () => { btn.hidden = true; music.failed = true; });
+  btn.addEventListener('click', () => { if (bgm.paused) bgm.play().catch(() => show()); else bgm.pause(); });
   bgm.play().catch(() => show());        // autoplay refused: wait for a tap
 }
-const showTime = () => (bgm && music.started && music.ok ? bgm.currentTime : undefined);
+const showTime = () => (bgm && music.started && !music.failed ? bgm.currentTime : undefined);
 
 // timing of update()
 const times = [];

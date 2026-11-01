@@ -68,7 +68,7 @@ try {
     page.on('pageerror', e => problems.push('pageerror: ' + e.message));
     await page.goto(BASE + 'index.html');
     await page.waitForFunction(() => window.__ready === true, null, { timeout: 120000 });
-    await page.waitForFunction(() => document.querySelector('#music.playing') && !document.querySelector('#music').hidden, null, { timeout: 20000 });
+    await page.waitForFunction(() => document.querySelector('#music.playing') && !document.querySelector('#music').hidden && window.__bgm.duration > 0, null, { timeout: 20000 });
     const m = await page.evaluate(async () => {
       const wait = ms => new Promise(r => setTimeout(r, ms));
       const a = [...document.querySelectorAll('audio')][0] || window.__bgm;
@@ -79,7 +79,7 @@ try {
       r.whaleAfterSeek = root.getObjectByName('whale').visible;
       document.getElementById('music').click(); await wait(300);
       r.pausedByButton = a.paused && !document.getElementById('music').classList.contains('playing');
-      document.getElementById('music').click(); await wait(300);
+      document.getElementById('music').click(); await wait(600);
       r.resumedByButton = !a.paused && document.getElementById('music').classList.contains('playing');
       return r;
     });
@@ -87,6 +87,23 @@ try {
     if (problems.length) fail('music: ' + problems.join('\n'));
     if (!(m.duration > 90 && m.playing && m.advanced > 0.5 && m.whaleAfterSeek && m.pausedByButton && m.resumedByButton)) fail('music does not drive the show as it should');
     await page.screenshot({ path: path.join(OUT, 'music-button.png') });
+    await page.close();
+  }
+  // like iOS Safari, where no audio loads before the first tap: hold the file back and the button must still be
+  // there (paused) on a phone-sized screen
+  {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    const problems = [];
+    page.on('pageerror', e => problems.push('pageerror: ' + e.message));
+    await page.route('**/audio/bgm.m4a', () => {});      // never answered
+    await page.goto(BASE + 'index.html');
+    await page.waitForFunction(() => window.__ready === true, null, { timeout: 120000 });
+    const b = await page.evaluate(() => { const e = document.getElementById('music'), r = e.getBoundingClientRect();
+      return { hidden: e.hidden, display: getComputedStyle(e).display, playing: e.classList.contains('playing'), inView: r.top >= 0 && r.right <= innerWidth && r.width > 0 }; });
+    console.log('phone button', JSON.stringify(b));
+    if (b.hidden || b.display === 'none' || b.playing || !b.inView) fail('no music button while the audio has not loaded');
+    if (problems.length) fail('phone: ' + problems.join('\n'));
+    await page.screenshot({ path: path.join(OUT, 'phone.png') });
     await page.close();
   }
   // the camera director: cut in mid-shot (screenshot), and live: glides in when they stop, back out when they run
