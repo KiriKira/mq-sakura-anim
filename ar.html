@@ -67,7 +67,8 @@
 <script type="module">
 // The animation (scene.js) on the printed tree, through the phone's camera.
 //  - WebAR.rocks.object finds the tree in every frame with the network trained on it (ar/nn/NN_SAKURA.json);
-//    ar/pose.js turns that into the tree's pose in camera space.
+//    ar/pose.js turns that into the tree's pose in camera space; ar/refine.js then lines the code printed on the
+//    plate up with the image (to about half a millimetre and a degree, where the network alone is good to 2 mm, 2°).
 //  - The printed tree is the design (tree.glb) squeezed to 41 x 41 x 27 mm, so the design tree and scene.js go in one
 //    group scaled like the print, centred on the tree's bounding box: nothing in scene.js changes.
 //  - The design tree writes depth only, so the real tree hides what goes behind it; a copy of it and the table take
@@ -75,12 +76,13 @@
 //  - The light comes from where the real tree's shadow on the table says it does (ar/light.js); with no clear shadow
 //    (soft light), the animation's shadows go faint. The image's brightness sets how bright the lights are.
 // Query parameters: debug = 1 (the network's view, numbers); fov = the camera's field of view along the image's long side,
-// degrees (default 63, a phone's main camera); nomusic = 1.
+// degrees (default 63, a phone's main camera); nomusic = 1; refine = 0 (the network's pose only, to compare).
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import setup from './scene.js';
 import { treePose } from './ar/pose.js';
 import { createLightEstimator } from './ar/light.js';
+import { createRefiner } from './ar/refine.js';
 
 const qs = new URLSearchParams(location.search);
 const $ = id => document.getElementById(id);
@@ -137,6 +139,7 @@ const table = new THREE.Mesh(new THREE.CircleGeometry(0.2, 48), new THREE.Shadow
 table.rotation.x = -Math.PI / 2; table.position.y = -0.00005; table.receiveShadow = true;
 stage.add(treeShadow, table);
 const light = createLightEstimator({ tree, info, printScale: PRINT, stage });
+const refiner = qs.get('refine') === '0' ? null : createRefiner({ tree, info, stage });
 
 // ---- layout: video and 3D layer share the video's shape, covering the screen ---------------------------------------
 const video = $('video');
@@ -198,6 +201,8 @@ $('go').addEventListener('click', async () => {
 
 // ---- every frame: find the tree, follow it smoothly, animate, draw -------------------------------------------------
 const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), UP = new THREE.Vector3();
+const refPos = new THREE.Vector3(), refQuat = new THREE.Quaternion();
+let lastRefined = -1e9, ref = null, refWhy = '', refHist = [];
 // the sun: towards the light the real shadow shows (tree space), held while the shadow is out of view;
 // hard while a shadow stands out, soft (faint shadows) when none does
 const sunDir = new THREE.Vector3(0.05, 0.11, 0.07).normalize(), HARD = 0.12;
@@ -218,11 +223,22 @@ let last = performance.now(), elapsed = 0, seen = -1e9, found = false, fps = 0;
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now; elapsed += dt; fps += (1 / Math.max(dt, 1e-3) - fps) * 0.05;
   const d = WEBARROCKSOBJECT.detect(0, null, DETECT);
-  if (d.label) {
-    treePose(d, camera.fov, camera.aspect, pos, quat);
+  let have = false;
+  if (d.label) { treePose(d, camera.fov, camera.aspect, pos, quat); have = true; }
+  // the second pass: start from the last refined pose while the network agrees with it (or briefly without the
+  // network), else from the network's
+  ref = null;
+  if (refiner && (have || now - lastRefined < 1000)) {
+    const fromLast = now - lastRefined < 250 && (!have || (refPos.distanceTo(pos) < 0.008 && refQuat.angleTo(quat) < 0.14));
+    const r = refiner.refine(video, video.videoWidth, video.videoHeight, camera.fov, camera.aspect, fromLast ? refPos : pos, fromLast ? refQuat : quat);
+    if (r.ok) { refPos.copy(r.pos); refQuat.copy(r.quat); lastRefined = now; pos.copy(r.pos); quat.copy(r.quat); have = true; ref = r; }
+    else refWhy = r.used < 50 ? `${r.used} edges` : r.rms >= 1.5 ? `rms ${r.rms.toFixed(1)} px` : `moved ${(r.moved * 1000).toFixed(1)} mm ${r.turned.toFixed(1)}°`;
+    refHist.push(r.ok ? 1 : 0); if (refHist.length > 60) refHist.shift();
+  }
+  if (have) {
     if (!found || now - seen > 600) { anchor.position.copy(pos); anchor.quaternion.copy(quat); }   // (re)found: jump there
-    else {   // follow, smoothing out the jitter between frames
-      const k = 1 - Math.exp(-dt * 14);
+    else {   // follow, smoothing out the jitter between frames (less when refined: it is precise)
+      const k = 1 - Math.exp(-dt * (ref ? 30 : 14));
       anchor.position.lerp(pos, k); anchor.quaternion.slerp(quat, k);
     }
     seen = now; found = true;
@@ -234,7 +250,8 @@ function frame(now) {
   if (visible && now - lastLight > 300) { lastLight = now; relight(light.estimate(video, camera)); }
   anim.update(dt, elapsed, showTime());
   renderer.render(scene, camera);
-  if (qs.get('debug')) $('hud').textContent = `fps ${fps.toFixed(0)}  ${d.label ? 'tree' : '—'}  score ${d.detectScore.toFixed(2)}\n` +
+  if (qs.get('debug')) $('hud').textContent = `fps ${fps.toFixed(0)}  ${d.label ? 'tree' : '—'}  score ${d.detectScore.toFixed(2)}  ` +
+    (refiner ? `refined ${Math.round(100 * refHist.reduce((a, b) => a + b, 0) / Math.max(1, refHist.length))}%: ` + (ref ? `${ref.used} edges, ${ref.rms.toFixed(2)} px` : `no (${refWhy})`) : 'refine off') + '\n' +
     `distance ${(-anchor.position.z * 100).toFixed(1)} cm  yaw ${(d.yaw * 57.3).toFixed(0)}°  pitch ${(d.pitch * 57.3).toFixed(0)}°  roll ${(d.roll * 57.3).toFixed(0)}°\n` +
     `video ${video.videoWidth}×${video.videoHeight}  fov ${camera.fov.toFixed(1)}° (vertical)\n` +
     `light ${est ? `az ${est.az}° el ${est.el}° contrast ${est.contrast.toFixed(2)}${est.contrast > HARD ? '' : ' (soft)'}` : '—'}  brightness ${light.brightness.toFixed(2)}`;
