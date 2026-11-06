@@ -71,13 +71,16 @@
 //  - The printed tree is the design (tree.glb) squeezed to 41 x 41 x 27 mm, so the design tree and scene.js go in one
 //    group scaled like the print, centred on the tree's bounding box: nothing in scene.js changes.
 //  - The design tree writes depth only, so the real tree hides what goes behind it; a copy of it and the table take
-//    the animation's shadows.
+//    the animation's shadows (not the tree's own: the real tree has one).
+//  - The light comes from where the real tree's shadow on the table says it does (ar/light.js); with no clear shadow
+//    (soft light), the animation's shadows go faint. The image's brightness sets how bright the lights are.
 // Query parameters: debug = 1 (the network's view, numbers); fov = the camera's field of view along the image's long side,
 // degrees (default 63, a phone's main camera); nomusic = 1.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import setup from './scene.js';
 import { treePose } from './ar/pose.js';
+import { createLightEstimator } from './ar/light.js';
 
 const qs = new URLSearchParams(location.search);
 const $ = id => document.getElementById(id);
@@ -121,7 +124,7 @@ stage.position.set(0, -box.getCenter(new THREE.Vector3()).y * PRINT.y, 0);   // 
 // the real tree hides what is behind it: the design tree writes depth only, before everything else
 const hideMat = new THREE.MeshBasicMaterial({ colorWrite: false });
 const debugMat = new THREE.MeshBasicMaterial({ color: '#40e0a0', transparent: true, opacity: 0.45, depthWrite: true });
-tree.traverse(o => { if (o.isMesh) { o.material = qs.get('debug') ? debugMat : hideMat; o.renderOrder = -1; o.castShadow = true; } });
+tree.traverse(o => { if (o.isMesh) { o.material = qs.get('debug') ? debugMat : hideMat; o.renderOrder = -1; o.castShadow = false; } });
 const anim = await setup({ THREE, stage, tree, info, mode: 'ar', showLength: SONG_LENGTH });
 stage.traverse(o => { if (o.isMesh && !tree.getObjectById(o.id)) o.castShadow = true; });   // the animation casts shadows
 
@@ -133,6 +136,7 @@ treeShadow.traverse(o => { if (o.isMesh) { o.material = shadowMat; o.receiveShad
 const table = new THREE.Mesh(new THREE.CircleGeometry(0.2, 48), new THREE.ShadowMaterial({ opacity: 0.22 }));
 table.rotation.x = -Math.PI / 2; table.position.y = -0.00005; table.receiveShadow = true;
 stage.add(treeShadow, table);
+const light = createLightEstimator({ tree, info, printScale: PRINT, stage });
 
 // ---- layout: video and 3D layer share the video's shape, covering the screen ---------------------------------------
 const video = $('video');
@@ -194,6 +198,22 @@ $('go').addEventListener('click', async () => {
 
 // ---- every frame: find the tree, follow it smoothly, animate, draw -------------------------------------------------
 const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), UP = new THREE.Vector3();
+// the sun: towards the light the real shadow shows (tree space), held while the shadow is out of view;
+// hard while a shadow stands out, soft (faint shadows) when none does
+const sunDir = new THREE.Vector3(0.05, 0.11, 0.07).normalize(), HARD = 0.12;
+let lastLight = 0, est = null, softness = 0;
+function relight(e) {
+  est = e;
+  const k = THREE.MathUtils.clamp(light.brightness / 0.45, 0.6, 1.3);   // the scene's exposure
+  const hard = !!(e && e.contrast > HARD);
+  if (hard) sunDir.lerp(e.phys, 0.35).normalize();
+  softness += ((hard ? 0 : 1) - softness) * 0.3;
+  sun.position.copy(sunDir).multiplyScalar(0.3);
+  sun.intensity = 2.2 * k * (1 - 0.45 * softness);
+  hemi.intensity = 1.6 * k * (1 + 0.35 * softness);
+  shadowMat.opacity = 0.28 * (1 - 0.6 * softness);
+  table.material.opacity = 0.22 * (1 - 0.6 * softness);
+}
 let last = performance.now(), elapsed = 0, seen = -1e9, found = false, fps = 0;
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now; elapsed += dt; fps += (1 / Math.max(dt, 1e-3) - fps) * 0.05;
@@ -211,11 +231,13 @@ function frame(now) {
   if (visible !== anchor.visible) { anchor.visible = visible; tip(visible ? '' : '把镜头对准樱花树，离它 15–25 厘米'); }
   // the sky stays above the tree: the hemisphere light points along the tree's up
   hemi.position.copy(UP.set(0, 1, 0).applyQuaternion(anchor.quaternion));
+  if (visible && now - lastLight > 300) { lastLight = now; relight(light.estimate(video, camera)); }
   anim.update(dt, elapsed, showTime());
   renderer.render(scene, camera);
   if (qs.get('debug')) $('hud').textContent = `fps ${fps.toFixed(0)}  ${d.label ? 'tree' : '—'}  score ${d.detectScore.toFixed(2)}\n` +
     `distance ${(-anchor.position.z * 100).toFixed(1)} cm  yaw ${(d.yaw * 57.3).toFixed(0)}°  pitch ${(d.pitch * 57.3).toFixed(0)}°  roll ${(d.roll * 57.3).toFixed(0)}°\n` +
-    `video ${video.videoWidth}×${video.videoHeight}  fov ${camera.fov.toFixed(1)}° (vertical)`;
+    `video ${video.videoWidth}×${video.videoHeight}  fov ${camera.fov.toFixed(1)}° (vertical)\n` +
+    `light ${est ? `az ${est.az}° el ${est.el}° contrast ${est.contrast.toFixed(2)}${est.contrast > HARD ? '' : ' (soft)'}` : '—'}  brightness ${light.brightness.toFixed(2)}`;
   requestAnimationFrame(frame);
 }
 </script>
