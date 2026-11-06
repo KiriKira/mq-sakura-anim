@@ -9,49 +9,12 @@
 // All geometry is in the stage's own (design) coordinates: metres, the plate's bottom at y = 0, centred. Light
 // directions are physical (as printed): a direction d in print space is P⁻¹d in design space, P the print scale.
 import * as THREE from 'three';
+import { treeGeometry } from './treegeom.js';
 
 const AZ_STEP = 15, ELEVATIONS = [20, 30, 40, 50, 60, 70, 80];   // degrees
-const STEP = 0.0004;                                             // ray-march step, design metres
 
 export function createLightEstimator({ tree, info, printScale, stage }) {
-  // ---- solid intervals per grid cell, from the tree's horizontal faces (each face covers one cell) ----
-  const N = info.grid.cols, cell = info.cell, x0 = info.grid.origin[0], z0 = info.grid.origin[1];
-  const faces = Array.from({ length: N * N }, () => []);
-  const toTree = new THREE.Matrix4(), inv = new THREE.Matrix4().copy(tree.matrixWorld).invert();
-  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
-  tree.traverse(o => {
-    if (!o.isMesh) return;
-    toTree.multiplyMatrices(inv, o.matrixWorld);
-    const p = o.geometry.getAttribute('position'), idx = o.geometry.index;
-    const tri = (t, k) => idx ? idx.getX(t * 3 + k) : t * 3 + k;
-    for (let t = 0; t < (idx ? idx.count : p.count) / 3; t += 2) {   // quads: two triangles each, take the first
-      a.fromBufferAttribute(p, tri(t, 0)).applyMatrix4(toTree); b.fromBufferAttribute(p, tri(t, 1)).applyMatrix4(toTree); c.fromBufferAttribute(p, tri(t, 2)).applyMatrix4(toTree);
-      n.subVectors(b, a).cross(c.clone().sub(a)).normalize();
-      if (Math.abs(n.y) < 0.9) continue;
-      const i = Math.floor(((a.x + b.x + c.x) / 3 - x0) / cell), k = Math.floor(((a.z + b.z + c.z) / 3 - z0) / cell);
-      if (i >= 0 && k >= 0 && i < N && k < N) faces[k * N + i].push([(a.y + b.y + c.y) / 3, n.y > 0 ? 1 : -1]);
-    }
-  });
-  const solid = faces.map(f => {   // [bottom, top, bottom, top, ...]
-    f.sort((u, v) => u[0] - v[0]); const out = []; let depth = 0;
-    for (const [y, s] of f) { if (s < 0) { if (depth++ === 0) out.push(y); } else if (--depth === 0) out.push(y); else if (depth < 0) depth = 0; }
-    return out;
-  });
-  let top = 0; for (const s of solid) if (s.length) top = Math.max(top, s[s.length - 1]);
-  const blocked = (x, y, z) => {
-    const i = Math.floor((x - x0) / cell), k = Math.floor((z - z0) / cell);
-    if (i < 0 || k < 0 || i >= N || k >= N) return false;
-    const s = solid[k * N + i];
-    for (let j = 0; j + 1 < s.length; j += 2) if (y >= s[j] && y <= s[j + 1]) return true;
-    return false;
-  };
-  // from (x, 0.0002, z) towards direction d (design space, unit): does it run into the tree before rising above it?
-  const hits = (x, z, d, y = 0.0002) => {
-    for (let t = STEP; ; t += STEP) {
-      const yy = y + d.y * t; if (yy > top) return false;
-      if (blocked(x + d.x * t, yy, z + d.z * t)) return true;
-    }
-  };
+  const geo = treeGeometry(tree, info), hits = (x, z, d) => geo.hits(x, 0.0002, z, d);
 
   // ---- table points round the plate, out to 6 cm (design), every 2.5 mm, not on the plate ----
   const half = info.plate.size / 2 + 0.0015, pts = [];
