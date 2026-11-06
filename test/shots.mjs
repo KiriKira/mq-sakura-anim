@@ -1,8 +1,8 @@
 // Self-check for scene.js: node test/shots.mjs [--shots-only]
-// Serves the repo with python3 -m http.server, opens index.html in headless Chromium (Playwright), runs the
+// Serves the repo with test/serve.mjs (a static server with Range support, so the music can seek), opens index.html in headless Chromium (Playwright), runs the
 // self-check (index.html?test=1), then takes screenshots from the four oblique corners and from straight above
 // into screenshots/, plus the walkers' model sheet (walkers.html). Fails on console errors, page errors, requests outside this server, or a failed check.
-import { spawn } from 'node:child_process';
+import { serve } from './serve.mjs';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -15,13 +15,13 @@ const PORT = 8123, BASE = `http://127.0.0.1:${PORT}/`;
 const OUT = path.join(ROOT, 'screenshots');
 fs.mkdirSync(OUT, { recursive: true });
 
-const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], { cwd: ROOT, stdio: 'ignore' });
+const server = await serve(PORT);
 let failed = false;
 const fail = m => { console.error('FAIL: ' + m); failed = true; };
 
 try {
   for (let i = 0; i < 50; i++) { try { await fetch(BASE); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
-  const browser = await chromium.launch({ args: ['--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist'] });
+  const browser = await chromium.launch({ args: ['--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
   async function open(query, size = { width: 1000, height: 800 }, page0 = 'index.html') {
     const page = await browser.newPage({ viewport: size, deviceScaleFactor: 1 });
     const problems = [];
@@ -29,7 +29,7 @@ try {
     page.on('pageerror', e => problems.push('pageerror: ' + e.message));
     page.on('request', r => { if (!r.url().startsWith(BASE)) problems.push('external request: ' + r.url()); });
     page.on('requestfailed', r => problems.push('request failed: ' + r.url()));
-    await page.goto(BASE + page0 + '?' + query);
+    await page.goto(BASE + page0 + '?' + (page0 === 'index.html' ? 'nomusic=1&' : '') + query);
     await page.waitForFunction(() => window.__ready === true, null, { timeout: 600000 });
     return { page, problems, report: await page.evaluate(() => window.__report) };
   }
@@ -40,6 +40,7 @@ try {
   if (problems.length) fail(problems.join('\n'));
   if (!report.walkersShown) fail('the walkers are not all shown (no path?)');
   if (report.insideTree.length) fail('something inside the tree');
+  if (report.showErrors.length) fail('the show is off its timeline');
   if (report.petalsAboveCanopy) fail('petals floating above the canopy');
   if (report.petalsFloating) fail('resting petals with nothing under them');
   if (report.stageAfterDispose.join() !== 'SakuraQR') fail('dispose() left ' + report.stageAfterDispose.join());
@@ -56,6 +57,103 @@ try {
     const { page, problems } = await open(`view=${view}&t=12&pause=1`);
     if (problems.length) fail(view + ': ' + problems.join('\n'));
     await page.screenshot({ path: path.join(OUT, view + '.png') });
+    await page.close();
+  }
+  // the music: it plays, the button says so, the show follows the song (seek to 20.5 s: the whale is up), and the
+  // button pauses and resumes it
+  {
+    const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+    const problems = [];
+    page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') problems.push(m.type() + ': ' + m.text()); });
+    page.on('pageerror', e => problems.push('pageerror: ' + e.message));
+    await page.goto(BASE + 'index.html');
+    await page.waitForFunction(() => window.__ready === true, null, { timeout: 120000 });
+    await page.waitForFunction(() => document.querySelector('#music.playing') && !document.querySelector('#music').hidden && window.__bgm.duration > 0, null, { timeout: 20000 });
+    const m = await page.evaluate(async () => {
+      const wait = ms => new Promise(r => setTimeout(r, ms));
+      const a = [...document.querySelectorAll('audio')][0] || window.__bgm;
+      const stage = window.__stage, root = stage.getObjectByName('SakuraQR-animation');
+      const r = { duration: a.duration, playing: !a.paused };
+      const t0 = a.currentTime; await wait(1000); r.advanced = a.currentTime - t0;
+      a.currentTime = 20.5; await wait(800);
+      r.whaleAfterSeek = root.getObjectByName('whale').visible;
+      document.getElementById('music').click(); await wait(300);
+      r.pausedByButton = a.paused && !document.getElementById('music').classList.contains('playing');
+      document.getElementById('music').click(); await wait(600);
+      r.resumedByButton = !a.paused && document.getElementById('music').classList.contains('playing');
+      return r;
+    });
+    m.hintGone = await page.evaluate(() => document.getElementById('hint').hidden);   // autoplay worked: no arrow
+    console.log('music', JSON.stringify(m));
+    if (problems.length) fail('music: ' + problems.join('\n'));
+    if (!(m.duration > 90 && m.playing && m.advanced > 0.5 && m.whaleAfterSeek && m.pausedByButton && m.resumedByButton && m.hintGone)) fail('music does not drive the show as it should');
+    await page.screenshot({ path: path.join(OUT, 'music-button.png') });
+    await page.close();
+  }
+  // like iOS Safari, where no audio loads before the first tap: hold the file back and the button must still be
+  // there (paused) on a phone-sized screen
+  {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    const problems = [];
+    page.on('pageerror', e => problems.push('pageerror: ' + e.message));
+    await page.route('**/audio/bgm.m4a', () => {});      // never answered
+    await page.goto(BASE + 'index.html');
+    await page.waitForFunction(() => window.__ready === true, null, { timeout: 120000 });
+    const b = await page.evaluate(() => { const e = document.getElementById('music'), r = e.getBoundingClientRect();
+      return { hidden: e.hidden, display: getComputedStyle(e).display, playing: e.classList.contains('playing'), inView: r.top >= 0 && r.right <= innerWidth && r.width > 0 }; });
+    // the arrow is there until the button is tapped, then gone for good, even after pausing again
+    const hintBefore = await page.evaluate(() => { const h = document.getElementById('hint'); return !h.hidden && getComputedStyle(h).visibility !== 'hidden'; });
+    await page.waitForTimeout(2200);                   // let it draw itself in
+    await page.screenshot({ path: path.join(OUT, 'phone-hint.png') });
+    await page.click('#music'); await page.waitForTimeout(500);
+    await page.evaluate(() => window.__bgm.pause()); await page.waitForTimeout(500);
+    const hintAfter = await page.evaluate(() => !document.getElementById('hint').hidden);
+    console.log('hint', JSON.stringify({ before: hintBefore, afterTapAndPause: hintAfter }));
+    if (!hintBefore || hintAfter) fail('the arrow should show until the first tap and never after');
+    console.log('phone button', JSON.stringify(b));
+    if (b.hidden || b.display === 'none' || b.playing || !b.inView) fail('no music button while the audio has not loaded');
+    if (problems.length) fail('phone: ' + problems.join('\n'));
+    await page.close();
+  }
+  // the music file can't be had at all: the button stays, greyed out and disabled
+  {
+    const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+    await page.route('**/audio/bgm.m4a', r => r.fulfill({ status: 404, body: '' }));
+    await page.goto(BASE + 'index.html');
+    await page.waitForFunction(() => window.__ready === true, null, { timeout: 120000 });
+    await page.waitForFunction(() => document.getElementById('music').disabled, null, { timeout: 20000 }).catch(() => {});
+    const b = await page.evaluate(() => { const e = document.getElementById('music');
+      return { hidden: e.hidden, disabled: e.disabled, display: getComputedStyle(e).display, filter: getComputedStyle(e).filter }; });
+    console.log('no music file', JSON.stringify(b));
+    if (b.hidden || b.display === 'none' || !b.disabled || !/grayscale/.test(b.filter)) fail('without the music file the button should stay, greyed out');
+    await page.screenshot({ path: path.join(OUT, 'music-unavailable.png'), clip: { x: 500, y: 0, width: 300, height: 70 } });
+    await page.close();
+  }
+  // the camera director: cut in mid-shot (screenshot), and live: glides in when they stop, back out when they run
+  {
+    const { page, problems } = await open('t=24&pause=1');
+    if (problems.length) fail('director: ' + problems.join('\n'));
+    await page.screenshot({ path: path.join(OUT, 'show-2-watch-camera.png') });
+    await page.close();
+  }
+  {
+    const { page, problems } = await open('t=18.5');
+    const seen = [];
+    for (const phase of ['in', 'hold', 'out', 'idle']) {
+      try { await page.waitForFunction(p => window.__director === p, phase, { timeout: 180000, polling: 50 }); seen.push(phase); }
+      catch { seen.push('no ' + phase); }
+    }
+    console.log('director', seen.join(' -> '));
+    if (seen.join() !== 'in,hold,out,idle') fail('the camera director did not glide in, hold and glide out');
+    if (problems.length) fail('director: ' + problems.join('\n'));
+    await page.close();
+  }
+  // the show: the whale diving in, everyone watching, the whale circling while they run, climbing away, the hop
+  for (const [view, t, name] of [['wide', 18.8, 'show-1-dive'], ['wide', 24, 'show-2-watch'], ['group', 24, 'show-2-watch-close'],
+    ['wide', 40, 'show-3-circle'], ['wide', 59.5, 'show-4-climb'], ['group', 70, 'show-5-hop']]) {
+    const { page, problems } = await open(`view=${view}&t=${t}&pause=1`, view === 'group' ? { width: 600, height: 600 } : { width: 1000, height: 800 });
+    if (problems.length) fail(name + ': ' + problems.join('\n'));
+    await page.screenshot({ path: path.join(OUT, name + '.png') });
     await page.close();
   }
   // close-ups: each walker, then the group over a second and a half
@@ -77,7 +175,7 @@ try {
   }
   await browser.close();
 } finally {
-  server.kill();
+  server.close();
 }
 if (failed) process.exit(1);
 console.log('ok');

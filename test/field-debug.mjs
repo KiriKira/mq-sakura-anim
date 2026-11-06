@@ -26,9 +26,9 @@ for (let r = 0; r < info.grid.rows; r++) {
 console.log(rows.join('\n'));
 const sp = _internals.spawnPoints(f, info, pt);
 console.log('spawn side', sp.side.length / 3, 'under', sp.under.length / 3);
-for (const R of [2.14, 1.95]) {
-  const p = _internals.buildPath(THREE, f, info, pt, R, 4.99);
-  if (!p) { console.log('R', R, 'no path'); continue; }
+for (const [R, H] of [[2.29, 5.34], [2.29, 4.6], [2.0, 5.34]]) {
+  const p = _internals.buildPath(THREE, f, info, pt, R, H);
+  if (!p) { console.log("R", R, "H", H, "no path"); continue; }
   const cx = info.trunk.centre[0] / info.cell, cz = info.trunk.centre[1] / info.cell, v = new THREE.Vector3(), d = [];
   for (let k = 0; k < 360; k++) { p.curve.getPointAt(k / 360, v); d.push(Math.hypot(v.x - cx, v.z - cz)); }
   const sorted = d.slice().sort((a, b) => a - b);
