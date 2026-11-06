@@ -1,0 +1,55 @@
+bg_0.jpg: own photo 2.jpg (top)
+bg_1.jpg: own photo 2.jpg (bottom)
+bg_2.jpg: own photo 3.jpg (top)
+bg_3.jpg: own photo 3.jpg (bottom)
+bg_4.jpg: own photo 4.jpg (top)
+bg_5.jpg: own photo 4.jpg (bottom)
+bg_6.jpg: own photo 5.jpg (top)
+bg_7.jpg: own photo 5.jpg (bottom)
+bg_8.jpg: own photo 6.jpg (top)
+bg_9.jpg: own photo 6.jpg (bottom)
+bg_10.jpg: Poly Haven texture beige_wall_001 (CC0)
+bg_11.jpg: Poly Haven texture cotton_jersey (CC0)
+bg_12.jpg: Poly Haven texture dark_wood (CC0)
+bg_13.jpg: Poly Haven texture dirty_carpet (CC0)
+bg_14.jpg: Poly Haven texture fine_grained_wood (CC0)
+bg_15.jpg: Poly Haven texture floor_tiles_06 (CC0)
+bg_16.jpg: Poly Haven texture gingham_check (CC0)
+bg_17.jpg: Poly Haven texture kitchen_wood (CC0)
+bg_18.jpg: Poly Haven texture laminate_floor_02 (CC0)
+bg_19.jpg: Poly Haven texture leather_white (CC0)
+bg_20.jpg: Poly Haven texture marble_01 (CC0)
+bg_21.jpg: Poly Haven texture oak_veneer_01 (CC0)
+bg_22.jpg: Poly Haven texture plywood (CC0)
+bg_23.jpg: Poly Haven texture poly_wool_herringbone (CC0)
+bg_24.jpg: Poly Haven texture rosewood_veneer1 (CC0)
+bg_25.jpg: Poly Haven texture rough_linen (CC0)
+bg_26.jpg: Poly Haven texture synthetic_wood (CC0)
+bg_27.jpg: Poly Haven texture white_plaster_02 (CC0)
+bg_28.jpg: Poly Haven texture wood_table (CC0)
+bg_29.jpg: Poly Haven texture wood_table_001 (CC0)
+bg_30.jpg: Poly Haven texture wood_table_worn (CC0)
+bg_31.jpg: Poly Haven HDRI artist_workshop (CC0), tonemapped, a crop just below the horizon
+bg_32.jpg: Poly Haven HDRI artist_workshop (CC0), tonemapped, a crop just below the horizon
+bg_33.jpg: Poly Haven HDRI ballroom (CC0), tonemapped, a crop just below the horizon
+bg_34.jpg: Poly Haven HDRI ballroom (CC0), tonemapped, a crop just below the horizon
+bg_35.jpg: Poly Haven HDRI brown_photostudio_01 (CC0), tonemapped, a crop just below the horizon
+bg_36.jpg: Poly Haven HDRI brown_photostudio_01 (CC0), tonemapped, a crop just below the horizon
+bg_37.jpg: Poly Haven HDRI cayley_interior (CC0), tonemapped, a crop just below the horizon
+bg_38.jpg: Poly Haven HDRI cayley_interior (CC0), tonemapped, a crop just below the horizon
+bg_39.jpg: Poly Haven HDRI empty_play_room (CC0), tonemapped, a crop just below the horizon
+bg_40.jpg: Poly Haven HDRI empty_play_room (CC0), tonemapped, a crop just below the horizon
+bg_41.jpg: Poly Haven HDRI fireplace (CC0), tonemapped, a crop just below the horizon
+bg_42.jpg: Poly Haven HDRI fireplace (CC0), tonemapped, a crop just below the horizon
+bg_43.jpg: Poly Haven HDRI hotel_room (CC0), tonemapped, a crop just below the horizon
+bg_44.jpg: Poly Haven HDRI hotel_room (CC0), tonemapped, a crop just below the horizon
+bg_45.jpg: Poly Haven HDRI lebombo (CC0), tonemapped, a crop just below the horizon
+bg_46.jpg: Poly Haven HDRI lebombo (CC0), tonemapped, a crop just below the horizon
+bg_47.jpg: Poly Haven HDRI peppermint_powerplant (CC0), tonemapped, a crop just below the horizon
+bg_48.jpg: Poly Haven HDRI peppermint_powerplant (CC0), tonemapped, a crop just below the horizon
+bg_49.jpg: Poly Haven HDRI photo_studio_loft_hall (CC0), tonemapped, a crop just below the horizon
+bg_50.jpg: Poly Haven HDRI photo_studio_loft_hall (CC0), tonemapped, a crop just below the horizon
+bg_51.jpg: Poly Haven HDRI studio_country_hall (CC0), tonemapped, a crop just below the horizon
+bg_52.jpg: Poly Haven HDRI studio_country_hall (CC0), tonemapped, a crop just below the horizon
+bg_53.jpg: Poly Haven HDRI veranda (CC0), tonemapped, a crop just below the horizon
+bg_54.jpg: Poly Haven HDRI veranda (CC0), tonemapped, a crop just below the horizon
