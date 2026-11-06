@@ -33,6 +33,11 @@ jobs:
           mkdir -p _site/node_modules/three/build _site/node_modules/three/examples/jsm/{loaders,controls,utils}
           cp -r index.html walkers.html whale.html scene.js tree.glb assets _site/
           if [ -d audio ]; then cp -r audio _site/; fi
+          # the AR page: its scripts, the runtime and the network (not the training files under ar/train)
+          mkdir -p _site/ar/nn
+          cp ar.html _site/
+          cp -r ar/pose.js ar/lib _site/ar/
+          cp ar/nn/NN_SAKURA.json _site/ar/nn/
           cp node_modules/three/build/three.module.js _site/node_modules/three/build/
           cp node_modules/three/examples/jsm/loaders/GLTFLoader.js _site/node_modules/three/examples/jsm/loaders/
           cp node_modules/three/examples/jsm/controls/OrbitControls.js _site/node_modules/three/examples/jsm/controls/
