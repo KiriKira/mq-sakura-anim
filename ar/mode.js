@@ -85,15 +85,22 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
   }
 
   // ---- camera on and off; the runtime and the network load once, on the first start --------------------------------
-  let stream = null, ready = false, running = false;
-  async function start() {
-    tip('正在打开相机…');
-    stream = await navigator.mediaDevices.getUserMedia({ audio: false,
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } });
+  // The camera's resolution is asked for by its short side (720, 1080, 2160); the camera gives the nearest it has.
+  // More pixels look sharper on a phone's screen (720p is enlarged about 2x there) and cost the runtime a bigger
+  // texture to upload every frame; the network itself and the second pass work on fixed-size crops either way.
+  let stream = null, ready = false, running = false, quality = 1080;
+  const constraints = q => ({ facingMode: { ideal: 'environment' }, width: { ideal: Math.round(q * 16 / 9) }, height: { ideal: q } });
+  async function open() {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: constraints(quality) });
     video.srcObject = stream;
     await video.play();
     await new Promise(ok => video.videoWidth ? ok() : video.addEventListener('loadedmetadata', ok, { once: true }));
     layout();
+  }
+  async function start(q) {
+    if (q) quality = q;
+    tip('正在打开相机…');
+    await open();
     if (!ready) {
       tip('正在加载识别模型（第一次约 5 MB）…');
       if (!window.WEBARROCKSOBJECT) await loadScript('ar/lib/WebARRocksObject.js');
@@ -102,10 +109,34 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
       await new Promise((ok, ko) => WEBARROCKSOBJECT.set_NN('ar/nn/NN_SAKURA.json', e => e ? ko(new Error(e)) : ok(), NN_OPTIONS));
       WEBARROCKSOBJECT.set_scanSettings(SCAN);
       ready = true;
-    }
+    } else newSize();   // (the image may have another size than last time)
     running = true; found = false; seen = -1e9; anchor.visible = false;
     tip(LOOK);
   }
+  // another resolution while running: ask the camera for it (or, if it won't change on the fly, open it again), then
+  // let the runtime know the image's size changed. Resolves with the size the camera actually gives.
+  async function setQuality(q) {
+    quality = q;
+    if (!running || !stream) return size();
+    const track = stream.getVideoTracks()[0], before = size();
+    let changed = false;
+    running = false;   // no detection while the image changes under the runtime
+    try {
+      const resized = new Promise(ok => { video.addEventListener('resize', ok, { once: true }); setTimeout(ok, 1500); });
+      await track.applyConstraints(constraints(q));
+      await resized;
+      changed = size() !== before || !!(track.getSettings && Math.min(track.getSettings().width || 0, track.getSettings().height || 0) === q);
+    } catch (e) { /* not on the fly: open it again below */ }
+    if (!changed) { stream.getTracks().forEach(t => t.stop()); await open(); }
+    layout();
+    newSize();
+    WEBARROCKSOBJECT.reset_state();
+    running = true; found = false; seen = -1e9; lastRefined = -1e9;
+    return size();
+  }
+  const size = () => `${video.videoWidth}×${video.videoHeight}`;
+  // the runtime reads the image's size in set_source, but only set_videoCrop updates what depends on it
+  const newSize = () => { WEBARROCKSOBJECT.set_source(video); WEBARROCKSOBJECT.set_videoCrop(null); };
   function stop() {
     running = false;
     if (stream) stream.getTracks().forEach(t => t.stop());
@@ -141,7 +172,7 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
     let d = null, have = false;
     if (running && video.readyState >= 2) {
       d = WEBARROCKSOBJECT.detect(0, null, DETECT);
-      if (d.label) { treePose(d, camera.fov, camera.aspect, pos, quat); have = true; }
+      if (d.label) { treePose(d, camera.fov, camera.aspect, pos, quat); have = isFinite(pos.x + pos.y + pos.z + quat.x + quat.y + quat.z + quat.w); }
       // the second pass: start from the last refined pose while the network agrees with it (or briefly without the
       // network), else from the network's
       ref = null;
@@ -149,7 +180,7 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
         const fromLast = now - lastRefined < 250 && (!have || (refPos.distanceTo(pos) < 0.008 && refQuat.angleTo(quat) < 0.14));
         const r = refiner.refine(video, video.videoWidth, video.videoHeight, camera.fov, camera.aspect, fromLast ? refPos : pos, fromLast ? refQuat : quat);
         if (r.ok) { refPos.copy(r.pos); refQuat.copy(r.quat); lastRefined = now; pos.copy(r.pos); quat.copy(r.quat); have = true; ref = r; }
-        else refWhy = r.used < 50 ? `${r.used} edges` : r.rms >= 1.5 ? `rms ${r.rms.toFixed(1)} px` : `moved ${(r.moved * 1000).toFixed(1)} mm ${r.turned.toFixed(1)}°`;
+        else refWhy = r.used < 50 ? `${r.used} edges` : r.used >= 50 && r.moved < 0.008 && r.turned < 8 ? `rms ${r.rms.toFixed(1)} px` : `moved ${(r.moved * 1000).toFixed(1)} mm ${r.turned.toFixed(1)}°`;
         refHist.push(r.ok ? 1 : 0); if (refHist.length > 60) refHist.shift();
       }
     }
@@ -175,5 +206,5 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
       `light ${est ? `az ${est.az}° el ${est.el}° contrast ${est.contrast.toFixed(2)}${est.contrast > HARD ? '' : ' (soft)'}` : '—'}  brightness ${light.brightness.toFixed(2)}`;
   }
 
-  return { scene, camera, stage, anim, start, stop, layout, frame, get hud() { return hud; }, get tracking() { return anchor.visible; } };
+  return { scene, camera, stage, anim, start, stop, setQuality, layout, frame, get quality() { return quality; }, get hud() { return hud; }, get tracking() { return anchor.visible; } };
 }

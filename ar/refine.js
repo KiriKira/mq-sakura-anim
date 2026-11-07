@@ -132,7 +132,9 @@ export function createRefiner({ tree, info, stage }) {
     let ss = 0, n = 0; for (const v of d) if (Math.abs(v) < 2) { ss += v * v; n++; }
     out.used = n; out.rms = n ? Math.sqrt(ss / n) / sc : 99;   // in video pixels
     out.moved = cp.distanceTo(pos); out.turned = THREE.MathUtils.radToDeg(cq.angleTo(quat));
-    out.ok = n >= 50 && out.rms < 1.5 && out.moved < 0.008 && out.turned < 8;
+    // the fit is judged in the pixels it was measured in (the crop, at most 480 across): with a sharper camera the
+    // crop is scaled down further, and the same fit would read worse in video pixels without being any worse
+    out.ok = n >= 50 && out.rms * sc < 1.5 && out.moved < 0.008 && out.turned < 8;
     out.pos.copy(cp); out.quat.copy(cq);
     return out;
   }
