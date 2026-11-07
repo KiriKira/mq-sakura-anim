@@ -2,13 +2,56 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Sakura QR animation</title>
 <style>
   html, body { margin: 0; height: 100%; background: #f4ede9; overflow: hidden; font: 13px/1.4 system-ui, sans-serif; }
+  body.ar { background: #111; }
   canvas { display: block; }
-  #hud { position: fixed; left: 8px; bottom: 8px; color: #6b4b4b; background: #fffc; padding: 4px 8px; border-radius: 6px; white-space: pre; }
-  #music { position: fixed; top: 12px; right: 12px; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 24px);
+  /* the 3D view; in AR the camera image under it, both with the video's shape, covering the screen (cropped) */
+  #wrap { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 100vw; height: 100vh; }
+  #wrap video, #wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #wrap video { display: none; }
+  body.ar #wrap video { display: block; }
+  #nn { position: fixed; right: 8px; bottom: 8px; width: 160px; height: 160px; opacity: .85; display: none !important; }
+  body.ar.debug #nn { display: block !important; }   /* (the AR runtime sets its own display) */
+  #hud { position: fixed; left: 8px; bottom: 8px; color: #6b4b4b; background: #fffc; padding: 4px 8px; border-radius: 6px; white-space: pre; display: none; }
+  body.debug #hud { display: block; }
+  body.ar #hud { color: #fff; background: #0008; font: 12px/1.4 ui-monospace, monospace; }
+  /* top left: 3D <-> AR */
+  #mode { position: fixed; top: calc(12px + env(safe-area-inset-top)); left: calc(12px + env(safe-area-inset-left)); display: flex; align-items: center; gap: 7px;
+    padding: 7px 14px 7px 10px; border: 0; border-radius: 999px; background: #fffd; color: #6b3b4b; font: 600 13px/1.2 system-ui, sans-serif;
+    box-shadow: 0 2px 10px #b0707033; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  #mode:hover { background: #fff; }
+  #mode:disabled { cursor: progress; opacity: .7; }
+  #mode svg { width: 18px; height: 18px; flex: none; fill: none; stroke: #e0567f; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  body.ar #mode, body.ar #music { box-shadow: 0 2px 10px #0004; }
+  #tip { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); max-width: calc(100vw - 32px);
+    padding: 8px 14px; border-radius: 999px; background: #0009; color: #fff; text-align: center; font-size: 14px; transition: opacity .3s; pointer-events: none; }
+  #tip.off { opacity: 0; }
+  body.rec #tip { bottom: calc(104px + env(safe-area-inset-bottom)); }
+  /* ?rec: the record button, bottom centre; while recording a ring shows how much of the song is left */
+  #rec { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: 68px; height: 68px;
+    border: 0; border-radius: 50%; padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    background: conic-gradient(#e0567f calc(var(--p, 0) * 1turn), #fffd 0); box-shadow: 0 2px 12px #0004; }
+  #rec[hidden] { display: none; }
+  #rec::before { content: ''; position: absolute; inset: 7px; border-radius: 50%; background: #e0567f; border: 3px solid #fff; transition: inset .2s, border-radius .2s; }
+  #rec.on::before { inset: 21px; border-radius: 5px; border: 0; }
+  #rec:disabled { opacity: .45; cursor: default; }
+  #rec .time { position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); padding: 3px 10px; border-radius: 999px;
+    background: #e0567f; color: #fff; font: 600 13px/1.3 ui-monospace, monospace; white-space: nowrap; }
+  #rec:not(.on) .time { display: none; }
+  #saved { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: #0008; }
+  #saved[hidden] { display: none; }
+  #saved .card { display: flex; flex-direction: column; gap: 12px; width: min(360px, 100%); max-height: 100%; padding: 14px; border-radius: 16px; background: #fff; color: #6b3b4b; box-sizing: border-box; }
+  #saved video { width: 100%; min-height: 0; flex: 1 1 auto; max-height: 60vh; border-radius: 10px; background: #000; object-fit: contain; }
+  #saved .row { display: flex; gap: 8px; }
+  #saved .row > * { flex: 1; padding: 10px 0; border: 0; border-radius: 999px; background: #f4e3e8; color: #6b3b4b; font: 600 15px system-ui, sans-serif;
+    text-align: center; text-decoration: none; cursor: pointer; }
+  #saved .row > .main { background: #e0567f; color: #fff; }
+  #saved .row > [hidden] { display: none; }
+  #saved .note { margin: 0; font-size: 12px; color: #9a7b85; text-align: center; }
+  #music { position: fixed; top: calc(12px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 150px);
     padding: 7px 14px 7px 10px; border: 0; border-radius: 999px; background: #fffd; color: #6b3b4b; font: 500 13px/1.2 system-ui, sans-serif;
     box-shadow: 0 2px 10px #b0707033; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   #music[hidden] { display: none; }
@@ -50,7 +93,22 @@
 </script>
 </head>
 <body>
+<div id="wrap"><video id="video" playsinline muted></video></div>
+<canvas id="nn" width="512" height="512"></canvas>
 <div id="hud"></div>
+<div id="tip" class="off"></div>
+<button id="mode" type="button" aria-label="切换到 AR：用相机看打印出来的树">
+  <svg viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M12 7.5l4 2.25v4.5L12 16.5l-4-2.25v-4.5z M8 9.75l4 2.25 4-2.25 M12 12v4.5"/></svg>
+  <span class="label">AR</span>
+</button>
+<button id="rec" type="button" hidden aria-label="录像：从头录完一首歌"><span class="time"></span></button>
+<div id="saved" hidden>
+  <div class="card">
+    <video id="clip" controls playsinline></video>
+    <div class="row"><a id="save" class="main" download>保存视频</a><button id="share" type="button" hidden>分享</button><button id="close" type="button">关闭</button></div>
+    <p class="note" id="clipinfo"></p>
+  </div>
+</div>
 <div id="hint" hidden aria-hidden="true">
   <svg viewBox="0 0 200 140">
     <path class="stroke" d="M8 128 C 40 131, 72 114, 92 96 C 116 74, 126 46, 107 42 C 88 38, 70 68, 90 84 C 114 102, 152 62, 186 13"/>
@@ -62,29 +120,40 @@
   <span class="label">muque - いいんじゃない</span>
 </button>
 <script type="module">
-// Demo host for scene.js (also what test/shots.mjs drives). Query parameters:
+// The page: the 3D animation, and (button at the top left) the same animation in AR on the printed tree, through the
+// phone's camera (ar/mode.js, loaded on first use). Also what test/shots.mjs drives. Query parameters:
 //   view = ne | nw | se | sw | top   camera preset (default wide, then free orbit); w0 | w1 | w2 | group close-up of the walkers;
 //          wide: further out and higher, to see the whale
 //   t    = song time to start at: fast-forwards with fixed 1/30 s steps (default 0)
 //   nomusic = 1                       no background music; the show runs on scene.js's own clock
 //   pause = 1                         stop the clock after fast-forwarding (for screenshots)
 //   test = 1                          run the self-check (see check() below) and put the result in window.__report
-//   mode = 3d | ar                    passed through to setup()
 //   tree = path of the tree GLB (default tree.glb)
+//   ar = 1                            open in AR (the camera asks for permission straight away)
+//   rec = 1                           a record button: one time through the song, picture and sound (rec.js)
+//   debug = 1                         numbers; in AR the occluding tree in green and the network's view
+//   fov = degrees                     AR: the camera's field of view along the image's long side (default 63, a phone's main camera)
+//   refine = 0                        AR: the network's pose only, without the second pass
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import setup from './scene.js';
 
 const qs = new URLSearchParams(location.search);
-const hud = document.getElementById('hud');
+const $ = id => document.getElementById(id);
+const hud = $('hud');
+let hud3d = '';   // the 3D view's numbers (debug), back when leaving AR
+let mode = '3d', ar = null, recorder = null;   // '3d' | 'ar'; ar: the AR mode once loaded (ar/mode.js); recorder: ?rec (rec.js)
+const DEBUG = !!(qs.get('debug') || qs.get('test'));
+if (DEBUG) document.body.classList.add('debug');
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+const wrap = $('wrap');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
+renderer.setSize(innerWidth, innerHeight, false);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-document.body.appendChild(renderer.domElement);
+wrap.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#f4ede9');
@@ -137,9 +206,18 @@ placeCamera(qs.get('view') || 'wide');
 
 let viewTouched = false;
 controls.addEventListener('start', () => { viewTouched = true; });
+function layout3d() {
+  Object.assign(wrap.style, { width: innerWidth + 'px', height: innerHeight + 'px' });
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+layout3d();
 addEventListener('resize', () => {
+  if (mode !== '3d') { if (ar) ar.layout(); return; }
   const wasPortrait = camera.aspect < 1;
-  renderer.setSize(innerWidth, innerHeight);
+  Object.assign(wrap.style, { width: innerWidth + 'px', height: innerHeight + 'px' });
+  renderer.setSize(innerWidth, innerHeight, false);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   // turned the phone round before moving the view: frame it again for the new shape
@@ -189,7 +267,7 @@ if (bgm) {
     music.failed = true; sounding = false; show(); document.getElementById('hint').hidden = true;
     btn.disabled = true; btn.title = '音乐无法播放'; btn.setAttribute('aria-label', '背景音乐：muque - いいんじゃない（无法播放）');
   });
-  btn.addEventListener('click', () => { if (bgm.paused) bgm.play().catch(() => show()); else bgm.pause(); });
+  btn.addEventListener('click', () => { if (recorder && recorder.recording) return; if (bgm.paused) bgm.play().catch(() => show()); else bgm.pause(); });
   bgm.play().catch(() => show());        // autoplay refused: wait for a tap
 }
 const showTime = () => (bgm && music.started && !music.failed ? bgm.currentTime : undefined);
@@ -313,14 +391,120 @@ function direct(dt) {
   window.__director = d.phase;
 }
 
+// ---- 3D <-> AR (the button at the top left) -------------------------------------------------------------------------
+// AR loads on first use: ar/mode.js with a second copy of the tree and its own scene.js, the WebAR.rocks runtime and
+// the network (~5 MB). Both run on this page's renderer and music, so the show carries on where it was. Leaving AR
+// turns the camera off. If the camera or the network can't be had, the page goes back to 3D and says why.
+const modeBtn = $('mode'), video = $('video');
+let tipTimer = 0;
+function tip(text, ms) {
+  clearTimeout(tipTimer);
+  $('tip').textContent = text || ''; $('tip').classList.toggle('off', !text);
+  if (text && ms) tipTimer = setTimeout(() => tip(''), ms);
+}
+function showMode() {
+  const toAR = mode === '3d';
+  modeBtn.querySelector('.label').textContent = toAR ? 'AR' : '3D';
+  modeBtn.setAttribute('aria-label', toAR ? '切换到 AR：用相机看打印出来的树' : '切换回 3D 动画');
+  modeBtn.title = toAR ? '用相机看打印出来的树' : '回到 3D 动画';
+  window.__mode = mode;
+}
+async function enterAR() {
+  if (mode !== '3d') return;
+  modeBtn.disabled = true;
+  mode = 'ar'; controls.enabled = false; document.body.classList.add('ar'); showMode();
+  if (bgm && bgm.paused && !music.failed && !(recorder && recorder.recording)) bgm.play().catch(() => {});   // a tap: sound may start
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('这个浏览器不能使用相机（需要 HTTPS）');
+    if (!ar) {
+      tip('正在准备 AR…');
+      const { createAR } = await import('./ar/mode.js');
+      ar = await createAR({ renderer, tree: tree.clone(), info, setup, showLength: SONG_LENGTH, video, nnCanvas: $('nn'), wrap,
+        debug: !!qs.get('debug'), fov: +(qs.get('fov') || 63), refine: qs.get('refine') !== '0', tip });
+      window.__ar = ar;
+    }
+    await ar.start();
+  } catch (e) {
+    console.warn('AR:', e);
+    leaveAR();
+    tip(e && e.name === 'NotAllowedError' ? '需要允许使用相机才能进入 AR' : '打不开 AR：' + (e && e.message || e), 6000);
+  }
+  modeBtn.disabled = false;
+}
+function leaveAR() {
+  if (mode !== 'ar') return;
+  if (ar) ar.stop();
+  mode = '3d'; controls.enabled = true; document.body.classList.remove('ar'); showMode();
+  tip('');
+  hud.textContent = hud3d;
+  layout3d();
+}
+modeBtn.addEventListener('click', () => { if (mode === '3d') enterAR(); else leaveAR(); });
+showMode();
+if (qs.get('ar')) enterAR();
+
+// ---- recording (?rec=1) ---------------------------------------------------------------------------------------------
+// The red button at the bottom: from the start of the song to its end, what is on screen (without the buttons) and the
+// song. Then the clip, to save or share. Tap again to stop early.
+const recBtn = $('rec');
+let clipURL = '';
+function drawView(g, W, H) {   // the page as seen: the 3D layer (and in AR the camera image under it), cropped like the screen
+  g.fillStyle = mode === 'ar' ? '#111' : '#f4ede9'; g.fillRect(0, 0, W, H);
+  const r = wrap.getBoundingClientRect(), sx = W / innerWidth, sy = H / innerHeight;
+  const box = [r.left * sx, r.top * sy, r.width * sx, r.height * sy];
+  if (mode === 'ar' && video.videoWidth) g.drawImage(video, ...box);
+  g.drawImage(renderer.domElement, ...box);
+}
+if (qs.get('rec')) {
+  const { createRecorder } = await import('./rec.js');
+  const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  recorder = createRecorder({ audio: bgm, length: SONG_LENGTH, onState: s => {
+    recBtn.classList.toggle('on', s.recording);
+    recBtn.style.setProperty('--p', s.recording ? (1 - s.remaining / SONG_LENGTH).toFixed(4) : 0);
+    recBtn.querySelector('.time').textContent = s.recording ? '● ' + fmt(s.remaining) : '';
+    btn.disabled = s.recording || music.failed;
+    if (s.file) showClip(s.file);
+  } });
+  window.__recorder = recorder;
+  document.body.classList.add('rec');
+  recBtn.hidden = false;
+  if (!recorder.supported) { recBtn.disabled = true; recBtn.title = '这个浏览器不支持录像'; }
+  else recBtn.title = '录像：从头录完一首歌（' + fmt(SONG_LENGTH) + '）';
+  recBtn.addEventListener('click', () => {
+    if (recorder.recording) recorder.stop();
+    else { $('hint').hidden = true; recorder.start().catch(e => { console.warn('rec:', e); tip('录像失败：' + (e && e.message || e), 6000); }); }
+  });
+}
+function showClip(file) {
+  if (clipURL) URL.revokeObjectURL(clipURL);
+  clipURL = URL.createObjectURL(file);
+  window.__clip = file;
+  $('clip').src = clipURL + '#t=0.1';   // (shows a first frame rather than black)
+  Object.assign($('save'), { href: clipURL, download: file.name });
+  $('clipinfo').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB`;
+  const canShare = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+  $('share').hidden = !canShare;
+  $('share').onclick = () => navigator.share({ files: [file], title: 'Sakura QR' }).catch(() => {});
+  $('saved').hidden = false;
+}
+$('close').addEventListener('click', () => { $('saved').hidden = true; $('clip').pause(); });
+
 const paused = !!qs.get('pause');
 let last = performance.now(), frames = 0;
 renderer.setAnimationLoop(now => {
   const dt = Math.min((now - last) / 1000, 0.1); last = now;
+  if (mode === 'ar') {
+    elapsed += dt;
+    if (ar) { ar.frame(now, dt, elapsed, showTime()); if (DEBUG) hud.textContent = ar.hud; }
+    else renderer.clear();
+    if (recorder) recorder.frame(drawView);
+    return;
+  }
   if (!paused) { elapsed += dt; timedUpdate(dt, elapsed, showTime()); }
   direct(dt);
   controls.update();
   renderer.render(scene, camera);
+  if (recorder) recorder.frame(drawView);
   if (++frames === 3) {
     const r = renderer.info.render;
     report.drawCalls = r.calls; report.triangles = r.triangles;
@@ -329,7 +513,7 @@ renderer.setAnimationLoop(now => {
     report.updateMs = { calls: times.length, median: sorted[sorted.length >> 1], p95: sorted[Math.floor(sorted.length * 0.95)], max: sorted[sorted.length - 1] };
     window.__report = report;
     window.__ready = true;
-    hud.textContent = `draw calls ${r.calls} · triangles ${r.triangles} · update ${report.updateMs.median.toFixed(3)} ms (p95 ${report.updateMs.p95.toFixed(3)})`;
+    hud.textContent = hud3d = `draw calls ${r.calls} · triangles ${r.triangles} · update ${report.updateMs.median.toFixed(3)} ms (p95 ${report.updateMs.p95.toFixed(3)})`;
   }
 });
 
