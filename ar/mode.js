@@ -19,7 +19,7 @@ const PRINT = new THREE.Vector3(41 / 46.722, 27 / 33.02, 41 / 46.722);   // the 
 const NN_OPTIONS = { notHereFactor: 0.0, paramsPerLabel: { SAKURA: { thresholdDetect: 1.0 } } };
 const DETECT = { isKeepTracking: true, isSkipConfirmation: false, thresholdDetectFactor: 1.2, thresholdDetectFactorUnstitch: 0.5, trackingFactors: [0.6, 0.6, 0.6] };
 const SCAN = { nScaleLevels: 3, overlapFactors: [3, 3, 3], scale0Factor: 0.5 };
-const HARD = 0.12;   // shadow contrast above which the light counts as hard
+const HARD = 0.08;   // shadow score (ar/light.js) above which the light counts as hard
 
 const loadScript = src => new Promise((ok, ko) => {
   const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => ko(new Error('无法加载 ' + src)); document.head.append(s);
@@ -158,7 +158,7 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
     est = e;
     const k = THREE.MathUtils.clamp(light.brightness / 0.45, 0.6, 1.3);   // the scene's exposure
     const hard = !!(e && e.contrast > HARD);
-    if (hard) sunDir.lerp(e.phys, 0.35).normalize();
+    if (hard) sunDir.lerp(e.phys, 0.2).normalize();   // turns over a second or two
     softness += ((hard ? 0 : 1) - softness) * 0.3;
     sun.position.copy(sunDir).multiplyScalar(0.3);
     sun.intensity = 2.2 * k * (1 - 0.45 * softness);
