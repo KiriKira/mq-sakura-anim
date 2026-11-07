@@ -10,6 +10,13 @@
 // update(dt, elapsed, showTime) once per frame (seconds). showTime is where the song is (e.g. audio.currentTime);
 // leave it out and the show runs on its own clock, looping every showLength seconds (default 93.27, the song's length).
 // dispose() removes and frees everything this module created.
+// setViewer(point) (optional, for AR): where the viewer's eye is, a THREE.Vector3 in stage coordinates, or null.
+// While it is set, the leader paces the chase so that the three stop to watch the whale where the viewer sees them
+// as the demo page's camera shot frames them: VIEW_SIDE clockwise (seen from above) of the viewer round the trunk,
+// on the viewer's side of the tree, not behind it (if the canopy would hide one of them there, or no natural pace
+// gets them there in time, the nearest spot that works). And the whale arrives where it then stays out of the
+// viewer's line of sight to them while they watch, as far as the tree lets them still see it. Call it every frame;
+// it counts until they stop. (A second argument, for tests, sets VIEW_SIDE.)
 //
 // The show (song time, seconds):
 //   0 – 17     the three run round the trunk, chasing each other
@@ -50,6 +57,12 @@ const WHALE_CLIMB = 60;       // how far it has climbed by the time it is gone
 const WHALE_ORBIT = 2;        // radius of its circle, in plate half-widths
 const WHALE_LAP = 40;         // seconds per lap round the tree
 const WHALE_LEAD = 25 * Math.PI / 180;   // where it arrives: this far clockwise (from above) of where the runners stop
+// setViewer(): where the runners stop, relative to the viewer — as index.html's camera shot has it (the camera 45°
+// counter-clockwise of them, seen from above) — and how the leader may pace the run-up to get there
+const VIEW_SIDE = Math.PI / 4;
+const STEER_FROM = 15;                 // seconds before the stop the pacing may start
+const STEER_V = [1.4, 4.2];            // the leader's speed while pacing, cubes per second (it wanders 1.8-3.8 anyway)
+const STEER_SPREAD = 70 * Math.PI / 180;   // if the ideal spot can't be reached at such a pace: the nearest that can, this far off at most
 
 export default async function setup({ THREE = THREE_NS, stage, tree, info, mode = '3d', showLength = 93.27 }) {
   const cell = info.cell;
@@ -105,6 +118,99 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
     walkers.forEach((w, i) => { w.s = ((-i * CHASE_GAP) % path.length + path.length) % path.length; w.obj.visible = true; });
   }
 
+  // ---- pacing for a viewer (setViewer) --------------------------------------------------------------------------
+  // The leader stops first and decelerates at 3.5 cubes/s² (see stepWalkers), the other two close up behind it, so
+  // the group's middle ends up about GROUP_BEHIND along the path behind the leader. Given the time left before the
+  // leader's stop, the speed that lands it at a spot is v with v·τ + v²/7 = distance (plus whole laps, whichever
+  // keeps v nearest its usual pace). Of the spots on the viewer's side, the ideal one if some pace in STEER_V gets
+  // there, else the nearest one that can be reached.
+  const GROUP_BEHIND = 3.3;
+  let viewerAngle = null;
+  const toRoot = new THREE.Matrix4(), vLocal = new THREE.Vector3(), pp = new THREE.Vector3();
+  const tcx0 = info.trunk.centre[0] / cell, tcz0 = info.trunk.centre[1] / cell;   // the trunk, in cubes
+  const pathAngle = [];          // the path's angle round the trunk at 720 points along it
+  if (path) for (let k = 0; k < 720; k++) { path.curve.getPointAt(k / 720, pp); pathAngle.push(Math.atan2(pp.z - tcz0, pp.x - tcx0)); }
+  const sAtAngle = a => {        // where along the path is at angle a round the trunk
+    let best = 0, bd = Infinity;
+    for (let k = 0; k < pathAngle.length; k++) { const d = Math.abs(Math.atan2(Math.sin(pathAngle[k] - a), Math.cos(pathAngle[k] - a))); if (d < bd) { bd = d; best = k; } }
+    return best / pathAngle.length * path.length;
+  };
+  const paceFor = (D, tau) => 3.5 * (-tau + Math.sqrt(tau * tau + 4 * D / 7));
+  let plan = null;               // { sLead, at, v }: the spot chosen (re-chosen every 0.2 s), and the pace last used
+  function steer(w, t) {         // the leader's pace for the viewer, or null
+    const T = SHOW.watchFrom[0], tau = T - t;
+    if (viewerAngle === null || !path || tau < 0.25 || tau > STEER_FROM) { plan = null; return null; }
+    const L = path.length;
+    // the pace that gets it from here to sLead: whole laps added as keeps the pace nearest `like`
+    const paceTo = (sLead, like) => {
+      const d0 = ((sLead - w.s) % L + L) % L; let best = null;
+      for (let laps = 0; laps < 4; laps++) { const v = paceFor(d0 + laps * L, tau); if (best === null || Math.abs(v - like) < Math.abs(best - like)) best = v; }
+      return best;
+    };
+    if (!plan || Math.abs(t - plan.at) >= 0.2) {
+      const ideal = viewerAngle + viewSide;
+      let pick = null;
+      for (let k = 0; k <= 14; k++) {
+        const dev = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * STEER_SPREAD / 7;
+        const sLead = (sAtAngle(ideal + dev) + GROUP_BEHIND) % L, d0 = ((sLead - w.s) % L + L) % L;
+        let hide = null;
+        for (let laps = 0; laps < 4; laps++) {
+          const v = paceFor(d0 + laps * L, tau);
+          const off = v < STEER_V[0] ? STEER_V[0] - v : v > STEER_V[1] ? v - STEER_V[1] : 0;
+          let cost = Math.abs(dev) + 10 * off + 0.02 * Math.abs(v - V0);
+          if (pick && cost >= pick.cost) continue;
+          if (hide === null) hide = hiddenAt(sLead);
+          cost += HIDDEN_COST * hide;
+          if (!pick || cost < pick.cost) pick = { sLead, v, cost, dev, hide };
+        }
+      }
+      plan = { sLead: pick.sLead, at: t, v: pick.v };
+      root.userData.viewerPlan = { dev: +((pick.dev || 0) * 180 / Math.PI).toFixed(0), hidden: pick.hide, v: +pick.v.toFixed(2) };   // for tests
+    }
+    plan.v = paceTo(plan.sLead, plan.v);
+    return Math.min(Math.max(plan.v, STEER_V[0]), STEER_V[1]);
+  }
+  // how many of the three the tree would hide from the viewer with the leader stopped at sLead (the other two behind
+  // it, as they close up): a line from each one's head and middle to the eye, marched through the collision columns
+  // until it is above the tree
+  const HIDDEN_COST = 40 * Math.PI / 180;   // a hidden runner counts like being this much further from the ideal spot
+  const eye = new THREE.Vector3(), top = info.height / cell + 0.5;
+  function hiddenAt(sLead) {
+    const L = path.length; let n = 0;
+    for (const back of [0, GROUP_BEHIND, 2 * GROUP_BEHIND]) {
+      // a little either side of where it is expected, from its waist to the top of its head: any of those hidden counts
+      let hid = false;
+      for (const along of [-0.8, 0, 0.8]) {
+        path.curve.getPointAt((((sLead - back + along) % L) + L) % L / L, pp);
+        if ([1.5, 3, 4.3].some(h => lineBlocked(pp.x, plateTop + h, pp.z))) { hid = true; break; }
+      }
+      if (hid) n++;
+    }
+    return n;
+  }
+  function lineBlocked(x, y, z, to = eye) {   // from (x, y, z) up towards `to`: does the tree get in the way?
+    const dx = to.x - x, dy = to.y - y, dz = to.z - z, len = Math.hypot(dx, dy, dz);
+    if (dy <= 0) return false;
+    for (let t = 0.6; t < len; t += 0.25) {
+      const yy = y + dy * t / len; if (yy > top) return false;
+      const xx = x + dx * t / len, zz = z + dz * t / len;
+      if (!field.col(xx, zz)) return false;        // off the tree's ground: nothing more in the way
+      if (field.blocked(xx, zz, yy - 0.05, yy + 0.05)) return true;
+    }
+    return false;
+  }
+  let viewSide = VIEW_SIDE;
+  function setViewer(point, side) {
+    if (side !== undefined) viewSide = side;   // (tests)
+    if (!point) { viewerAngle = null; return; }
+    stage.updateMatrixWorld(true);
+    toRoot.copy(root.matrix).invert();
+    vLocal.copy(point).applyMatrix4(toRoot);   // stage -> the animation's cubes
+    viewerAngle = Math.atan2(vLocal.z - tcz0, vLocal.x - tcx0);
+    eye.copy(vLocal);
+    root.userData.viewer = { angle: viewerAngle, target: viewerAngle + viewSide };
+  }
+
   // ---- whale ------------------------------------------------------------------------------------------------------
   // Circles the trunk on a big circle — WHALE_ORBIT times the plate's half-width (the one thing in the scene allowed
   // beyond 3 cubes past the plate's edge) — high enough that, flukes, fins and banking included, it stays clear of
@@ -153,12 +259,54 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
       const v = walkers.reduce((a, w) => a + w.v, 0) / walkers.length;
       ahead = (Math.max(0, stopAt - t) * v + v * v / (2 * 3.5)) / (path.length / (2 * Math.PI));
     }
-    const target = groupAngle() + ahead + WHALE_LEAD;
+    const stopAngle = groupAngle() + ahead;
+    const target = stopAngle + whaleLead(stopAngle, t);
     // first sight (or a page opened after the whale arrived): put it there; otherwise ease towards it, never jump
     if (wPhase === null) wPhase = target;
     else wPhase += Math.atan2(Math.sin(target - wPhase), Math.cos(target - wPhase)) * Math.min(1, dt * (t < SHOW.whaleArrive ? 2 : 1.2));
     if (t >= SHOW.whaleArrive + 0.6 && walkers.every(w => w.v < 0.05)) wLocked = true;
     root.userData.whalePlan = { runners: groupAngle(), whale: wPhase, locked: wLocked };
+  }
+  // With a viewer (setViewer), where the whale arrives also decides whether it then swims through the viewer's line
+  // of sight to the three while they watch it (the viewer is close, as a phone is, and the whale's circle runs at
+  // about the height of that line). So try arrival points from 40° counter-clockwise to 120° clockwise of the
+  // runners, follow the whale over the watch, and count the moments it would be in front of them (its body as a
+  // line along its path, 6 cubes thick, fins and bob included; in front of their heads or middles) and, more heavily, each of them the tree would hide it from; the usual
+  // WHALE_LEAD wins ties. Re-chosen every 0.25 s while the whale is still steering.
+  let leadPick = null;
+  const wp = new THREE.Vector3(), ax = new THREE.Vector3(), q0 = new THREE.Vector3(), seg = new THREE.Vector3(), rel = new THREE.Vector3(), rel2 = new THREE.Vector3();
+  function nearSegment(p, a, b, r) {   // is p within r of the segment a-b?
+    seg.subVectors(b, a); rel.subVectors(p, a);
+    const k = Math.max(0, Math.min(1, rel.dot(seg) / seg.lengthSq()));
+    return rel.addScaledVector(seg, -k).lengthSq() < r * r;
+  }
+  // the best arrival for the three stopping at stopAngle, trying one every `step` degrees and following the whale
+  // every `every` seconds: { lead (radians), cost (per second of the watch) }
+  function whaleCost(stopAngle, step, every) {
+    const L = path.length, s0 = sAtAngle(stopAngle), heads = [];
+    for (const off of [GROUP_BEHIND, 0, -GROUP_BEHIND]) { path.curve.getPointAt((((s0 + off) % L) + L) % L / L, pp); heads.push(new THREE.Vector3(pp.x, plateTop + 3, pp.z)); }
+    let best = null;
+    for (let lead = -40; lead <= 120; lead += step) {
+      let cost = Math.abs(lead * Math.PI / 180 - WHALE_LEAD) / Math.PI;
+      for (let tt = SHOW.whaleArrive + 0.5; tt < SHOW.watchTo[0]; tt += every) {
+        const a = stopAngle + lead * Math.PI / 180 + wOmega * (tt - SHOW.whaleArrive);
+        wp.set(tcx + wR * Math.cos(a), wAlt, tcz + wR * Math.sin(a));
+        ax.set(-Math.sin(a), 0, Math.cos(a)).multiplyScalar(11);   // along its path, half its length
+        if (heads.some(h => [0, -1.5].some(dy => [-1, -0.5, 0, 0.5, 1].some(k => nearSegment(q0.copy(wp).addScaledVector(ax, k), eye, rel2.copy(h).setY(h.y + dy), 6))))) cost += every;
+        for (const h of heads) if (lineBlocked(h.x, h.y + 0.5, h.z, wp)) cost += 1.5 * every;   // (from their eyes)
+        if (best && cost >= best.cost) break;
+      }
+      if (!best || cost < best.cost) best = { lead: lead * Math.PI / 180, cost };
+    }
+    return best;
+  }
+  function whaleLead(stopAngle, t) {
+    if (viewerAngle === null || !path) { leadPick = null; return WHALE_LEAD; }
+    if (leadPick && Math.abs(t - leadPick.t) < 0.25) return leadPick.lead;
+    const best = whaleCost(stopAngle, 5, 0.5);
+    leadPick = { t, lead: best.lead };
+    root.userData.whaleLead = +(best.lead * 180 / Math.PI).toFixed(0);   // for tests
+    return best.lead;
   }
   // where the whale is at song time t: [x, y, z, scale]; null when it is not in the sky
   function whaleAt(t, out) {
@@ -355,7 +503,9 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
       w.mode = modeAt(t, i);
       let target;
       const hop = w.mode === 'hop';
+      const paced = i === 0 && w.mode === 'run' ? steer(w, t) : null;
       if (w.mode === 'watch') target = 0;
+      else if (paced !== null) target = paced;
       else if (i === 0) target = (hop ? V_HOP : V0) * (1 + (hop ? 0.1 : 0.25) * Math.sin(clock * 0.31) + 0.12 * Math.sin(clock * 0.77));
       else {
         const ahead = walkers[i - 1];
@@ -364,7 +514,7 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
         target = ahead.v + 1.6 * (gap - want);
         if (gap < MIN_GAP + 0.6) target = Math.min(target, ahead.v * Math.max(0, (gap - MIN_GAP) / 0.6));
       }
-      target = Math.min(Math.max(target, 0), 4);
+      target = Math.min(Math.max(target, 0), paced !== null ? STEER_V[1] : 4);
       w.v = ease(w.v, target, 3, w.mode === 'watch' ? 3.5 : 8, dt);
       if (i > 0) {                                  // never closer than MIN_GAP, whatever the easing does
         const ahead = walkers[i - 1], gap = ((ahead.s - w.s) % L + L) % L;
@@ -410,16 +560,22 @@ export default async function setup({ THREE = THREE_NS, stage, tree, info, mode 
 
   return {
     update(dt, elapsed, showTime) {
-      dt = Math.min(Math.max(dt || 0, 0), MAX_DT);
+      const raw = Math.max(dt || 0, 0);
+      dt = Math.min(raw, MAX_DT);
       clock += dt;
+      const before = show;
       if (typeof showTime === 'number' && Number.isFinite(showTime)) show = showTime;
       else show = (show + dt) % showLength;
+      // the runners keep up with the song when frames are slow (their stops are timed to it): they move by the song
+      // time that went by, up to half a second, not just the capped step; a jump in the song (seek, loop) doesn't count
+      const went = show - before, walkDt = went > dt && went < 0.5 ? went : dt;
       stepWind(clock);
       stepWhale(show, dt);
-      stepWalkers(dt, show);
+      stepWalkers(walkDt, show);
       for (const p of P) stepPetal(p, dt, !!path);
       writePetals();
     },
+    setViewer,
     dispose() {
       stage.remove(root);
       for (const w of walkers) { w.mixer.stopAllAction(); w.mixer.uncacheRoot(w.obj); }

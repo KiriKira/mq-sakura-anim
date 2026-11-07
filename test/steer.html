@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>scene.js setViewer check</title>
+<!-- Run by test/shots.mjs (window.__steer): where the three stop to watch the whale when a viewer (as the AR page sets it) appears at
+     different times and places, against where they stop without one; and whether the canopy hides any of them. -->
+<script type="importmap">
+{ "imports": { "three": "../node_modules/three/build/three.module.js", "three/addons/": "../node_modules/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import setup from '../scene.js';
+
+const gltf = await new GLTFLoader().loadAsync('../tree.glb');
+const tree = gltf.scene.getObjectByName('SakuraQR') || gltf.scene;
+const stage = new THREE.Group(); stage.add(tree);
+const info = tree.userData.sakuraqr;
+const anim = await setup({ THREE, stage, tree, info, mode: 'ar' });
+const root = stage.getObjectByName('SakuraQR-animation');
+stage.updateMatrixWorld(true);
+const solids = []; tree.traverse(o => { if (o.isMesh) solids.push(o); });
+const ray = new THREE.Raycaster();
+const walkers = []; const whale = root.getObjectByName('whale');
+root.traverse(o => { if (o.isSkinnedMesh && !whale.getObjectById(o.id)) walkers.push(o.parent); });
+const T = [info.trunk.centre[0], info.trunk.centre[1]];
+const wrap = a => Math.atan2(Math.sin(a), Math.cos(a)), deg = a => +(a * 180 / Math.PI).toFixed(1);
+
+// a viewer as the AR page has one: 15 cm out from the trunk and 16 cm up (design metres), at azimuth a
+const eyeAt = a => new THREE.Vector3(T[0] + 0.15 * Math.cos(a), 0.16, T[1] + 0.15 * Math.sin(a));
+const who = [];
+function hidden(eye) {   // how many of the three the canopy hides from eye (any of head, middle)
+  let n = 0; who.length = 0;
+  for (const w of walkers) {
+    const p = w.getWorldPosition(new THREE.Vector3());
+    const blocked = [3.5, 2].some(h => {
+      const q = p.clone().add(new THREE.Vector3(0, h * info.cell, 0)), d = q.clone().sub(eye), len = d.length();
+      ray.set(eye, d.normalize()); ray.far = len - 0.0005; return ray.intersectObjects(solids, false).length > 0;
+    });
+    if (blocked) { n++; who.push(walkers.indexOf(w)); }
+  }
+  return n;
+}
+const SIDE = +(new URLSearchParams(location.search).get('side') || 45) * Math.PI / 180;
+let whaleMesh = null; whale.traverse(o => { if (o.isMesh) whaleMesh = o; });
+function whaleCovers(eye) {   // does the whale cover any of the three (head or middle) from eye?
+  if (!whale.visible) return false;
+  for (const w of walkers) for (const h of [3.5, 2]) {
+    const q = w.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, h * info.cell, 0)), d = q.clone().sub(eye), len = d.length();
+    ray.set(eye, d.normalize()); ray.far = len; if (ray.intersectObject(whaleMesh, false).length) return true;
+  }
+  return false;
+}
+function cantSeeWhale() {   // any of the three whose view of the whale the tree blocks
+  if (!whale.visible) return false;
+  const wp = whale.getWorldPosition(new THREE.Vector3());
+  return walkers.some(w => { const e = w.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 3.5 * info.cell, 0)), d = wp.clone().sub(e), len = d.length();
+    ray.set(e, d.normalize()); ray.far = len; return ray.intersectObjects(solids, false).length > 0; });
+}
+const cases = [];
+for (const steer of [false, true]) for (const enter of [5, 10, 15]) for (let k = 0; k < 8; k++) {
+  const a = k * Math.PI / 4 + 0.2, eye = eyeAt(a);
+  anim.setViewer(null); root.userData.whaleLead = undefined;
+  let vmin = Infinity, vmax = 0, covered = 0, looked = 0, blind = 0, snap = null;
+  for (let t = 0; t < 29.2; t += 1 / 30) {
+    if (steer && t >= enter) anim.setViewer(eye, SIDE);
+    anim.update(1 / 30, t, t);
+    const r = root.userData.runners;
+    if (t >= enter && t < 19.5 && r) { vmin = Math.min(vmin, r[0].v); vmax = Math.max(vmax, r[0].v); }
+    if (snap === null && t >= 24) { stage.updateMatrixWorld(true); snap = { group: root.userData.whalePlan.runners, hidden: hidden(eye), who: who.join(),
+      spread: walkers.map(w => { const p = w.getWorldPosition(new THREE.Vector3()); return deg(wrap(Math.atan2(p.z - T[1], p.x - T[0]) - (a + SIDE))); }).join(' ') }; }
+    if (t > 20.5 && t < 29 && Math.round(t * 30) % 10 === 0) { stage.updateMatrixWorld(true); looked++; if (whaleCovers(eye)) covered++; if (t > 22 && t < 28.5 && cantSeeWhale()) blind++; }
+  }
+  cases.push({ steer, enter, viewer: deg(wrap(a)), whaleCovers: +(covered / looked).toFixed(2), blind, lead: root.userData.whaleLead, off: deg(wrap(snap.group - (a + SIDE))), hidden: snap.hidden, who: snap.who, spread: snap.spread, vmin: +vmin.toFixed(2), vmax: +vmax.toFixed(2) });
+}
+window.__steer = cases;
+window.__ready = true;
+</script>
+</body>
+</html>

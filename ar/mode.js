@@ -139,6 +139,7 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
   const newSize = () => { WEBARROCKSOBJECT.set_source(video); WEBARROCKSOBJECT.set_videoCrop(null); };
   function stop() {
     running = false;
+    if (anim.setViewer) anim.setViewer(null);
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null; video.srcObject = null;
     anchor.visible = false;
@@ -147,7 +148,7 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
 
   // ---- every frame: find the tree, follow it smoothly, animate, draw -----------------------------------------------
   const LOOK = '把镜头对准樱花树，离它 15–25 厘米';
-  const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), UP = new THREE.Vector3();
+  const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), UP = new THREE.Vector3(), eyeAt = new THREE.Vector3();
   const refPos = new THREE.Vector3(), refQuat = new THREE.Quaternion();
   let lastRefined = -1e9, ref = null, refWhy = '', refHist = [];
   // the sun: towards the light the real shadow shows (tree space), held while the shadow is out of view;
@@ -197,6 +198,9 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
     // the sky stays above the tree: the hemisphere light points along the tree's up
     hemi.position.copy(UP.set(0, 1, 0).applyQuaternion(anchor.quaternion));
     if (visible && now - lastLight > 300) { lastLight = now; relight(light.estimate(video, camera)); }
+    // where the phone is, for the show: the three stop to watch the whale on the phone's side of the tree, as the 3D
+    // view's camera shot frames them (scene.js setViewer); held while the tree is out of sight
+    if (have && anim.setViewer) { stage.updateMatrixWorld(true); anim.setViewer(stage.worldToLocal(eyeAt.set(0, 0, 0))); }
     anim.update(dt, elapsed, showTime);
     renderer.render(scene, camera);
     if (debug && d) hud = `fps ${fps.toFixed(0)}  ${d.label ? 'tree' : '—'}  score ${d.detectScore.toFixed(2)}  ` +
