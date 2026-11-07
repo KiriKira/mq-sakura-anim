@@ -53,6 +53,28 @@ try {
   await page.close();
   }
 
+  {   // setViewer (AR): where the three stop to watch, with a viewer appearing 5, 10 or 15 s in, from 8 directions;
+      // whether the tree hides them from it, the whale passes in front of them, or the tree hides the whale from them
+    const page = await browser.newPage();
+    const problems = [];
+    page.on('pageerror', e => problems.push('pageerror: ' + e.message));
+    page.on('console', m => { if (m.type() === 'error') problems.push('error: ' + m.text()); });
+    await page.goto(BASE + 'test/steer.html');
+    await page.waitForFunction(() => window.__ready === true, null, { timeout: 600000 });
+    const cases = await page.evaluate(() => window.__steer), on = cases.filter(c => c.steer), off = cases.filter(c => !c.steer);
+    const med = g => g.map(c => Math.abs(c.off)).sort((a, b) => a - b)[g.length >> 1];
+    const summary = g => ({ medianOff: med(g), maxOff: Math.max(...g.map(c => Math.abs(c.off))), someoneHidden: g.filter(c => c.hidden).length + '/' + g.length,
+      whaleInFront: +(g.reduce((a, c) => a + c.whaleCovers, 0) / g.length).toFixed(2), cantSeeWhale: g.filter(c => c.blind).length + '/' + g.length });
+    console.log('steer', JSON.stringify({ without: summary(off), with: summary(on) }));
+    if (problems.length) fail('steer: ' + problems.join('\n'));
+    if (med(on) > 15 || Math.max(...on.map(c => Math.abs(c.off))) > 60) fail('setViewer: the three stop too far from the viewer\'s spot');
+    if (on.filter(c => c.hidden).length > 2) fail('setViewer: the tree hides one of them from the viewer too often');
+    if (on.some(c => c.vmin < 1.3 || c.vmax > 4.3)) fail('setViewer: the leader paced too slow or too fast');
+    if (on.reduce((a, c) => a + c.whaleCovers, 0) / on.length > 0.3) fail('setViewer: the whale is in front of the three too much of the time');
+    if (on.filter(c => c.blind).length > 4) fail('setViewer: the tree hides the whale from them too often');
+    await page.close();
+  }
+
   for (const view of ['ne', 'nw', 'se', 'sw', 'top']) {
     const { page, problems } = await open(`view=${view}&t=12&pause=1`);
     if (problems.length) fail(view + ': ' + problems.join('\n'));

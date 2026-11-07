@@ -19,7 +19,7 @@ const PRINT = new THREE.Vector3(41 / 46.722, 27 / 33.02, 41 / 46.722);   // the 
 const NN_OPTIONS = { notHereFactor: 0.0, paramsPerLabel: { SAKURA: { thresholdDetect: 1.0 } } };
 const DETECT = { isKeepTracking: true, isSkipConfirmation: false, thresholdDetectFactor: 1.2, thresholdDetectFactorUnstitch: 0.5, trackingFactors: [0.6, 0.6, 0.6] };
 const SCAN = { nScaleLevels: 3, overlapFactors: [3, 3, 3], scale0Factor: 0.5 };
-const HARD = 0.12;   // shadow contrast above which the light counts as hard
+const HARD = 0.08;   // shadow score (ar/light.js) above which the light counts as hard
 
 const loadScript = src => new Promise((ok, ko) => {
   const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => ko(new Error('无法加载 ' + src)); document.head.append(s);
@@ -139,6 +139,7 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
   const newSize = () => { WEBARROCKSOBJECT.set_source(video); WEBARROCKSOBJECT.set_videoCrop(null); };
   function stop() {
     running = false;
+    if (anim.setViewer) anim.setViewer(null);
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null; video.srcObject = null;
     anchor.visible = false;
@@ -147,7 +148,7 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
 
   // ---- every frame: find the tree, follow it smoothly, animate, draw -----------------------------------------------
   const LOOK = '把镜头对准樱花树，离它 15–25 厘米';
-  const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), UP = new THREE.Vector3();
+  const pos = new THREE.Vector3(), quat = new THREE.Quaternion(), UP = new THREE.Vector3(), eyeAt = new THREE.Vector3();
   const refPos = new THREE.Vector3(), refQuat = new THREE.Quaternion();
   let lastRefined = -1e9, ref = null, refWhy = '', refHist = [];
   // the sun: towards the light the real shadow shows (tree space), held while the shadow is out of view;
@@ -158,7 +159,7 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
     est = e;
     const k = THREE.MathUtils.clamp(light.brightness / 0.45, 0.6, 1.3);   // the scene's exposure
     const hard = !!(e && e.contrast > HARD);
-    if (hard) sunDir.lerp(e.phys, 0.35).normalize();
+    if (hard) sunDir.lerp(e.phys, 0.2).normalize();   // turns over a second or two
     softness += ((hard ? 0 : 1) - softness) * 0.3;
     sun.position.copy(sunDir).multiplyScalar(0.3);
     sun.intensity = 2.2 * k * (1 - 0.45 * softness);
@@ -197,6 +198,9 @@ export async function createAR({ renderer, tree, info, setup, showLength, video,
     // the sky stays above the tree: the hemisphere light points along the tree's up
     hemi.position.copy(UP.set(0, 1, 0).applyQuaternion(anchor.quaternion));
     if (visible && now - lastLight > 300) { lastLight = now; relight(light.estimate(video, camera)); }
+    // where the phone is, for the show: the three stop to watch the whale on the phone's side of the tree, as the 3D
+    // view's camera shot frames them (scene.js setViewer); held while the tree is out of sight
+    if (have && anim.setViewer) { stage.updateMatrixWorld(true); anim.setViewer(stage.worldToLocal(eyeAt.set(0, 0, 0))); }
     anim.update(dt, elapsed, showTime);
     renderer.render(scene, camera);
     if (debug && d) hud = `fps ${fps.toFixed(0)}  ${d.label ? 'tree' : '—'}  score ${d.detectScore.toFixed(2)}  ` +
