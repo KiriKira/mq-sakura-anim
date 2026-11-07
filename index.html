@@ -25,7 +25,13 @@
   #mode:hover { background: #fff; }
   #mode:disabled { cursor: progress; opacity: .7; }
   #mode svg { width: 18px; height: 18px; flex: none; fill: none; stroke: #e0567f; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-  body.ar #mode, body.ar #music { box-shadow: 0 2px 10px #0004; }
+  body.ar #mode, body.ar #music, body.ar #quality { box-shadow: 0 2px 10px #0004; }
+  /* AR only, next to it: the camera's resolution, tap for the next one */
+  #quality { position: fixed; top: calc(12px + env(safe-area-inset-top)); left: calc(84px + env(safe-area-inset-left)); display: none;
+    padding: 7px 12px; border: 0; border-radius: 999px; background: #fffd; color: #6b3b4b; font: 600 13px/1.2 system-ui, sans-serif;
+    cursor: pointer; -webkit-tap-highlight-color: transparent; white-space: nowrap; }
+  body.ar #quality { display: block; }
+  #quality:disabled { cursor: progress; opacity: .7; }
   #tip { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); max-width: calc(100vw - 32px);
     padding: 8px 14px; border-radius: 999px; background: #0009; color: #fff; text-align: center; font-size: 14px; transition: opacity .3s; pointer-events: none; }
   #tip.off { opacity: 0; }
@@ -101,6 +107,7 @@
   <svg viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M12 7.5l4 2.25v4.5L12 16.5l-4-2.25v-4.5z M8 9.75l4 2.25 4-2.25 M12 12v4.5"/></svg>
   <span class="label">AR</span>
 </button>
+<button id="quality" type="button" aria-label="相机画质（点击切换）" title="相机画质：点击切换 720p / 1080p / 4K">画质</button>
 <button id="rec" type="button" hidden aria-label="录像：从头录完一首歌"><span class="time"></span></button>
 <div id="saved" hidden>
   <div class="card">
@@ -134,6 +141,7 @@
 //   debug = 1                         numbers; in AR the occluding tree in green and the network's view
 //   fov = degrees                     AR: the camera's field of view along the image's long side (default 63, a phone's main camera)
 //   refine = 0                        AR: the network's pose only, without the second pass
+//   cam = 720 | 1080 | 2160           AR: the camera's resolution (short side) to start with; the button next to 3D changes it
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -395,7 +403,25 @@ function direct(dt) {
 // AR loads on first use: ar/mode.js with a second copy of the tree and its own scene.js, the WebAR.rocks runtime and
 // the network (~5 MB). Both run on this page's renderer and music, so the show carries on where it was. Leaving AR
 // turns the camera off. If the camera or the network can't be had, the page goes back to 3D and says why.
-const modeBtn = $('mode'), video = $('video');
+const modeBtn = $('mode'), video = $('video'), qualityBtn = $('quality');
+// the camera's resolution in AR, by its short side: ?cam=720|1080|2160, else what this viewer picked last, else 1080
+const QUALITIES = [720, 1080, 2160];
+const store = { get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} } };
+let camQuality = [+qs.get('cam'), +store.get('sakura-cam'), 1080].find(q => QUALITIES.includes(q));
+function showQuality() {   // what the camera actually gives (it may not have what was asked for)
+  const short = Math.min(video.videoWidth, video.videoHeight);
+  qualityBtn.textContent = '画质 ' + (short ? (short >= 2000 ? '4K' : short + 'p') : (camQuality >= 2000 ? '4K' : camQuality + 'p'));
+}
+qualityBtn.addEventListener('click', async () => {
+  if (!ar || mode !== 'ar') return;
+  camQuality = QUALITIES[(QUALITIES.indexOf(camQuality) + 1) % QUALITIES.length];
+  store.set('sakura-cam', camQuality);
+  qualityBtn.disabled = true; qualityBtn.textContent = '画质 …';
+  try { await ar.setQuality(camQuality); } catch (e) { console.warn('camera:', e); tip('切换画质失败：' + (e && e.message || e), 5000); }
+  qualityBtn.disabled = false; showQuality();
+  const asked = camQuality, got = Math.min(video.videoWidth, video.videoHeight);
+  if (got && got < asked) tip(`这个相机最高只给 ${got}p`, 3000);
+});
 let tipTimer = 0;
 function tip(text, ms) {
   clearTimeout(tipTimer);
@@ -423,7 +449,8 @@ async function enterAR() {
         debug: !!qs.get('debug'), fov: +(qs.get('fov') || 63), refine: qs.get('refine') !== '0', tip });
       window.__ar = ar;
     }
-    await ar.start();
+    await ar.start(camQuality);
+    showQuality();
   } catch (e) {
     console.warn('AR:', e);
     leaveAR();
